@@ -6,7 +6,7 @@ import threading
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
 
-# --- Render Health Check ---
+# --- Health Check Server ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -18,53 +18,52 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- Watermark ဖျက်တဲ့ Logic အသစ် (Morphological Method) ---
+# --- Watermark ဖျက်တဲ့ Logic (Fixed Center Area) ---
 async def remove_watermark(input_path, output_path):
     img = cv2.imread(input_path)
     if img is None: return False
     
-    # ပုံရဲ့ Height, Width ကိုယူမယ်
     h, w, _ = img.shape
-
-    # 1. Grayscale ပြောင်းမယ်
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # 2. Morphological Gradient ရှာမယ် (ဒါက စာသားတွေကို ပိုထင်ရှားစေတယ်)
-    # Kernel Size (5,5) က စာလုံးအကြီးအသေးပေါ်မူတည်ပြီး ပြောင်းနိုင်တယ်
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    morph = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel)
-
-    # 3. Binarization (အဖြူ အမည်း သတ်မှတ်မယ်)
-    # Otsu's thresholding က အလိုအလျောက် အကောင်းဆုံး threshold ကိုရှာပေးတယ်
-    _, mask = cv2.threshold(morph, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-
-    # 4. Cleaning the Mask (အမည်းစက် သေးသေးမွှားမွှားတွေကို ဖယ်ထုတ်မယ်)
-    # စာလုံးမဟုတ်တဲ့ အစက်အပျောက်တွေကို မဖျက်မိအောင်ပါ
-    kernel_clean = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_clean)
-
-    # 5. Expanding the Mask (စာလုံးရဲ့ အတွင်းသားတွေကိုပါ လွှမ်းခြုံအောင် Mask ကိုချဲ့မယ်)
-    # Dilation လုပ်လိုက်ရင် စာလုံးအနားသတ်တင်မကဘဲ တစ်လုံးချင်းစီ ပြည့်သွားမယ်
-    mask = cv2.dilate(mask, kernel, iterations=3)
-
-    # 6. Region of Interest (ROI) - တစ်ပုံလုံးလျှောက်ဖျက်ရင် ရုပ်ပျက်တတ်လို့
-    # အောက်ခြေနဲ့ အပေါ်ထိပ်နားက စာတွေကိုပဲ ဦးတည်ပြီးဖျက်မယ်
-    # (Tiktok လို Watermark မျိုးအတွက် အဆင်ပြေအောင်)
-    final_mask = np.zeros_like(mask)
     
-    # ထိပ်ပိုင်း 20%
-    final_mask[0:int(h*0.2), :] = mask[0:int(h*0.2), :]
-    # အောက်ခြေ 30%
-    final_mask[int(h*0.7):h, :] = mask[int(h*0.7):h, :]
+    # --- ၁။ ဖျက်မယ့် ဧရိယာ (ROI) ကို သတ်မှတ်မယ် ---
+    # ပုံတိုင်းရဲ့ အလယ်တည့်တည့်မှာပဲ ရှိတယ်ဆိုလို့ ဒီဂဏန်းတွေ သတ်မှတ်ထားပါတယ်
+    # (0.45 မှ 0.55 ဆိုတာ ပုံအမြင့်ရဲ့ 45% နဲ့ 55% ကြားနေရာပါ)
+    y1 = int(h * 0.40)  # အပေါ်ဘက် ဘောင် (အနည်းငယ် လျှော့ချထားသည်)
+    y2 = int(h * 0.60)  # အောက်ဘက် ဘောင် (အနည်းငယ် တိုးထားသည်)
+    x1 = int(w * 0.20)  # ဘယ်ဘက် ဘောင်
+    x2 = int(w * 0.80)  # ညာဘက် ဘောင်
+
+    # အဲ့ဒီဧရိယာအကွက်လေးကိုပဲ ဖြတ်ထုတ်မယ်
+    roi = img[y1:y2, x1:x2]
     
-    # ဘေးဘောင်တွေ (Optional) - လိုအပ်ရင် ဖွင့်သုံးနိုင်ပါတယ်
-    # final_mask[:, 0:int(w*0.15)] = mask[:, 0:int(w*0.15)] # ဘယ်ဘက်ကပ်စာများ
-    # final_mask[:, int(w*0.85):w] = mask[:, int(w*0.85):w] # ညာဘက်ကပ်စာများ
-
-    # 7. Inpainting (ပုံဖျက်ပြီး အစားထိုးခြင်း)
-    # Radius 5 ထားလိုက်တယ်၊ အရမ်းကြီးရင် ဝါးမယ်
-    result = cv2.inpaint(img, final_mask, 5, cv2.INPAINT_TELEA)
-
+    # --- ၂။ Text Mask ဖန်တီးခြင်း (ROI အတွင်းမှာပဲ) ---
+    # Grayscale ပြောင်း
+    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    
+    # Gradient Method (ကာလာမရွေးဘူး၊ စာရဲ့ အဖုအထစ်ကို ရှာတယ်)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    grad = cv2.morphologyEx(gray_roi, cv2.MORPH_GRADIENT, kernel)
+    
+    # Thresholding (စာသားတွေကို အဖြူရောင်ဖြစ်အောင် ပြောင်း)
+    _, binary_mask = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    
+    # Morphological Close (စာလုံးတွေ ပြတ်တောက်မနေအောင် ဆက်ပေးမယ်)
+    kernel_connect = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1)) # အလျားလိုက် ဦးစားပေးဆက်မယ်
+    connected_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel_connect)
+    
+    # Dilation (စာလုံးထက် Mask က နည်းနည်းပိုကြီးနေမှ ဖျက်ရင်ပြောင်မှာ)
+    final_roi_mask = cv2.dilate(connected_mask, None, iterations=4)
+    
+    # --- ၃။ Full Image Mask ပြန်ပေါင်းခြင်း ---
+    # ပုံအကြီးကြီးအတိုင်း Mask အလွတ်တစ်ခုယူမယ်
+    full_mask = np.zeros((h, w), dtype=np.uint8)
+    # ခုနက ROI Mask လေးကို သူ့နေရာ (အလယ်) မှာ ပြန်ထည့်မယ်
+    full_mask[y1:y2, x1:x2] = final_roi_mask
+    
+    # --- ၄။ Inpainting (ဖျက်ပြီး အစားထိုးခြင်း) ---
+    # Radius 5 သုံးထားတယ်
+    result = cv2.inpaint(img, full_mask, 5, cv2.INPAINT_TELEA)
+    
     cv2.imwrite(output_path, result)
     return True
 
@@ -72,8 +71,7 @@ async def handle_photo(update: Update, context):
     if not update.message or not update.message.photo:
         return
 
-    # User ကို စာပြန်မယ်
-    msg = await update.message.reply_text("Watermark ဖျက်နေပါသည်... ⏳")
+    msg = await update.message.reply_text("အလယ်ကစာကို ဖျက်နေပါသည်... ⏳")
 
     try:
         file = await update.message.photo[-1].get_file()
@@ -86,21 +84,19 @@ async def handle_photo(update: Update, context):
             await update.message.reply_photo(photo=open(out_f, 'rb'))
             await msg.delete()
         else:
-            await msg.edit_text("ပုံကို ဖတ်မရပါ။")
+            await msg.edit_text("Failed to process image.")
             
-        # Cleanup
         if os.path.exists(in_f): os.remove(in_f)
         if os.path.exists(out_f): os.remove(out_f)
             
     except Exception as e:
         print(f"Error: {e}")
-        await msg.edit_text(f"Error ဖြစ်သွားပါတယ်: {str(e)}")
+        await msg.edit_text(f"Error: {str(e)}")
 
 if __name__ == '__main__':
     threading.Thread(target=run_health_server, daemon=True).start()
-    
     TOKEN = os.getenv("BOT_TOKEN")
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    print("Bot Started...")
+    print("Bot Started with Fixed Center Mode...")
     app.run_polling()
