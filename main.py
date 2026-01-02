@@ -18,38 +18,84 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- Watermark ဖျက်တဲ့ Logic ---
+# --- Watermark ဖျက်တဲ့ Logic အသစ် ---
 async def remove_watermark(input_path, output_path):
     img = cv2.imread(input_path)
     if img is None: return False
+    
     h, w, _ = img.shape
-    cy1, cy2, cx1, cx2 = int(h*0.4), int(h*0.8), int(w*0.3), int(w*0.9)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    
+    # 1. ရုပ်ထွက်ပိုရှင်းအောင် အရင်လုပ်မယ် (Contrast Boosting)
+    # ဒါမှ အရောင်မှိန်နေတဲ့ Watermark တွေကိုပါ မြင်ရမှာ
+    alpha = 1.5 # Contrast control
+    beta = 0    # Brightness control
+    adjusted = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+    
+    # 2. Grayscale ပြောင်းမယ်
+    gray = cv2.cvtColor(adjusted, cv2.COLOR_BGR2GRAY)
+    
+    # 3. Edge Detection (Canny) သုံးမယ်
+    # ဒါက အရောင်မရွေးဘူး၊ စာသားရဲ့ ဘောင်တွေကို ရှာပေးတယ် (Multicolored text အတွက် အရေးကြီးတယ်)
+    edges = cv2.Canny(gray, 50, 150)
+    
+    # 4. စာသားတွေကို ပိုပြီး ထင်ရှားအောင် Mask လုပ်မယ် (Dilation)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    mask = cv2.dilate(edges, kernel, iterations=2)
+    
+    # 5. Region of Interest (ROI) သတ်မှတ်မယ် 
+    # (ပုံတစ်ခုလုံး လျှောက်ဖျက်ရင် ရုပ်ပျက်သွားမှာစိုးလို့ အောက်ခြေနားကိုပဲ ဦးတည်ပြီးဖျက်မယ်)
+    # လိုအပ်ရင် ဒီဧရိယာကို ပြင်နိုင်ပါတယ်
     final_mask = np.zeros_like(mask)
-    final_mask[cy1:cy2, cx1:cx2] = mask[cy1:cy2, cx1:cx2]
-    result = cv2.inpaint(img, final_mask, 7, cv2.INPAINT_TELEA)
+    
+    # ဥပမာ - ပုံရဲ့ အောက်ခြေ 40% လောက်ကိုပဲ ရှာပြီးဖျက်မယ်
+    y_start = int(h * 0.60) 
+    final_mask[y_start:h, 0:w] = mask[y_start:h, 0:w]
+    
+    # 6. Inpainting (စာသားနေရာကို ဘေးကအရောင်နဲ့ အစားထိုးမယ်)
+    # Radius ကို 3 ထားလိုက်တယ်၊ သိပ်ကြီးရင် ဝါးသွားတတ်လို့ပါ
+    result = cv2.inpaint(img, final_mask, 3, cv2.INPAINT_TELEA)
+    
     cv2.imwrite(output_path, result)
     return True
 
 async def handle_photo(update: Update, context):
-    file = await update.message.photo[-1].get_file()
-    in_f, out_f = f"in_{update.message.message_id}.jpg", f"out_{update.message.message_id}.jpg"
-    await file.download_to_drive(in_f)
-    if await remove_watermark(in_f, out_f):
-        await update.message.reply_photo(photo=open(out_f, 'rb'))
-    os.remove(in_f); os.remove(out_f)
+    if not update.message or not update.message.photo:
+        return
+
+    # User ကို စောင့်နေကြောင်း အသိပေးမယ်
+    processing_msg = await update.message.reply_text("ဓာတ်ပုံကို ပြုပြင်နေပါသည်... ခဏစောင့်ပါ ⏳")
+
+    try:
+        file = await update.message.photo[-1].get_file()
+        in_f = f"in_{update.message.message_id}.jpg"
+        out_f = f"out_{update.message.message_id}.jpg"
+        
+        await file.download_to_drive(in_f)
+        
+        if await remove_watermark(in_f, out_f):
+            await update.message.reply_photo(photo=open(out_f, 'rb'))
+            await processing_msg.delete() # ပြီးရင် msg ပြန်ဖျက်
+        else:
+            await processing_msg.edit_text("ပုံကို ပြုပြင်၍ မရပါ။")
+            
+        # Cleanup
+        if os.path.exists(in_f): os.remove(in_f)
+        if os.path.exists(out_f): os.remove(out_f)
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        await processing_msg.edit_text("Error တစ်ခုဖြစ်သွားပါတယ် :( ")
 
 if __name__ == '__main__':
-    # Web Server ကို Thread တစ်ခုနဲ့ သီးသန့် run ထားမယ်
+    # Web Server Run
     threading.Thread(target=run_health_server, daemon=True).start()
     
-    # Telegram Bot ကို Run မယ်
+    # Bot Start
     TOKEN = os.getenv("BOT_TOKEN")
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.run_polling()
-
-
-
-
+    if not TOKEN:
+        print("Error: BOT_TOKEN is missing!")
+    else:
+        app = ApplicationBuilder().token(TOKEN).build()
+        app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        print("Bot is polling...")
+        app.run_polling()
