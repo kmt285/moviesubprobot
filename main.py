@@ -34,7 +34,7 @@ async def remove_watermark(input_path, output_path):
 
 async def handle_photo(update: Update, context):
     file = await update.message.photo[-1].get_file()
-    in_f, out_f = f"in_{update.id}.jpg", f"out_{update.id}.jpg"
+    in_f, out_f = f"in_{update.message.message_id}.jpg", f"out_{update.message.message_id}.jpg"
     await file.download_to_drive(in_f)
     if await remove_watermark(in_f, out_f):
         await update.message.reply_photo(photo=open(out_f, 'rb'))
@@ -49,3 +49,4 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.run_polling()
+
