@@ -6,7 +6,7 @@ import threading
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
 
-# --- Health Check Server ---
+# --- Render Health Check ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -18,51 +18,48 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- Watermark ဖျက်တဲ့ Logic (Fixed Center Area) ---
+# --- Watermark ဖျက်တဲ့ Logic (Fixed Box Method) ---
 async def remove_watermark(input_path, output_path):
     img = cv2.imread(input_path)
     if img is None: return False
     
     h, w, _ = img.shape
     
-    # --- ၁။ ဖျက်မယ့် ဧရိယာ (ROI) ကို သတ်မှတ်မယ် ---
-    # ပုံတိုင်းရဲ့ အလယ်တည့်တည့်မှာပဲ ရှိတယ်ဆိုလို့ ဒီဂဏန်းတွေ သတ်မှတ်ထားပါတယ်
-    # (0.45 မှ 0.55 ဆိုတာ ပုံအမြင့်ရဲ့ 45% နဲ့ 55% ကြားနေရာပါ)
-    y1 = int(h * 0.45)  # အပေါ်ဘက် ဘောင် (အနည်းငယ် လျှော့ချထားသည်)
-    y2 = int(h * 0.70)  # အောက်ဘက် ဘောင် (အနည်းငယ် တိုးထားသည်)
-    x1 = int(w * 0.20)  # ဘယ်ဘက် ဘောင်
-    x2 = int(w * 0.80)  # ညာဘက် ဘောင်
+    # ==========================================
+    # ချိန်ညှိရန် နေရာ (Box Configuration)
+    # ==========================================
+    # ပို့ပေးထားတဲ့ Reference ပုံထဲက အဖြူကွက် အရွယ်အစားအတိုင်း မှန်းထားပါတယ်
+    # လိုအပ်ရင် ဒီဂဏန်းတွေကို အတိုးအလျှော့ လုပ်နိုင်ပါတယ်
+    
+    # 35% of Image Width (အလျား ၃၅ ရာခိုင်နှုန်း)
+    BOX_WIDTH_PCT = 0.35  
+    
+    # 8% of Image Height (အမြင့် ၈ ရာခိုင်နှုန်း)
+    BOX_HEIGHT_PCT = 0.08 
+    
+    # ==========================================
 
-    # အဲ့ဒီဧရိယာအကွက်လေးကိုပဲ ဖြတ်ထုတ်မယ်
-    roi = img[y1:y2, x1:x2]
+    # ၁။ အလယ်မှတ် (Center Point) ရှာခြင်း
+    center_x, center_y = w // 2, h // 2
     
-    # --- ၂။ Text Mask ဖန်တီးခြင်း (ROI အတွင်းမှာပဲ) ---
-    # Grayscale ပြောင်း
-    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    # ၂။ လေးထောင့်ကွက်၏ Pixel အကျယ်အဝန်းကို တွက်ခြင်း
+    box_w = int(w * BOX_WIDTH_PCT)
+    box_h = int(h * BOX_HEIGHT_PCT)
     
-    # Gradient Method (ကာလာမရွေးဘူး၊ စာရဲ့ အဖုအထစ်ကို ရှာတယ်)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    grad = cv2.morphologyEx(gray_roi, cv2.MORPH_GRADIENT, kernel)
-    
-    # Thresholding (စာသားတွေကို အဖြူရောင်ဖြစ်အောင် ပြောင်း)
-    _, binary_mask = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    
-    # Morphological Close (စာလုံးတွေ ပြတ်တောက်မနေအောင် ဆက်ပေးမယ်)
-    kernel_connect = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1)) # အလျားလိုက် ဦးစားပေးဆက်မယ်
-    connected_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel_connect)
-    
-    # Dilation (စာလုံးထက် Mask က နည်းနည်းပိုကြီးနေမှ ဖျက်ရင်ပြောင်မှာ)
-    final_roi_mask = cv2.dilate(connected_mask, None, iterations=4)
-    
-    # --- ၃။ Full Image Mask ပြန်ပေါင်းခြင်း ---
-    # ပုံအကြီးကြီးအတိုင်း Mask အလွတ်တစ်ခုယူမယ်
-    full_mask = np.zeros((h, w), dtype=np.uint8)
-    # ခုနက ROI Mask လေးကို သူ့နေရာ (အလယ်) မှာ ပြန်ထည့်မယ်
-    full_mask[y1:y2, x1:x2] = final_roi_mask
-    
-    # --- ၄။ Inpainting (ဖျက်ပြီး အစားထိုးခြင်း) ---
-    # Radius 5 သုံးထားတယ်
-    result = cv2.inpaint(img, full_mask, 5, cv2.INPAINT_TELEA)
+    # ၃။ လေးထောင့်ကွက်၏ ထောင့်စွန်း Coordinates များကို တွက်ခြင်း
+    x1 = center_x - (box_w // 2)
+    x2 = center_x + (box_w // 2)
+    y1 = center_y - (box_h // 2)
+    y2 = center_y + (box_h // 2)
+
+    # ၄။ Mask ဖန်တီးခြင်း
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    # တွက်ချက်ထားသော နေရာကို အဖြူရောင် (255) ဖြင့် Mask လုပ်မည်
+    mask[y1:y2, x1:x2] = 255
+
+    # ၅။ Inpainting (အစားထိုး ဖျက်ခြင်း)
+    # radius 3 က အနားသတ်တွေကို သေသပ်စေပါတယ်
+    result = cv2.inpaint(img, mask, 3, cv2.INPAINT_TELEA)
     
     cv2.imwrite(output_path, result)
     return True
@@ -71,7 +68,8 @@ async def handle_photo(update: Update, context):
     if not update.message or not update.message.photo:
         return
 
-    msg = await update.message.reply_text("အလယ်ကစာကို ဖျက်နေပါသည်... ⏳")
+    # User feedback
+    msg = await update.message.reply_text("သတ်မှတ်ထားသော နေရာကွက်ကို ဖျက်နေပါသည်... ⏳")
 
     try:
         file = await update.message.photo[-1].get_file()
@@ -84,8 +82,9 @@ async def handle_photo(update: Update, context):
             await update.message.reply_photo(photo=open(out_f, 'rb'))
             await msg.delete()
         else:
-            await msg.edit_text("Failed to process image.")
+            await msg.edit_text("ပုံကို ဖတ်၍မရပါ။")
             
+        # Cleanup
         if os.path.exists(in_f): os.remove(in_f)
         if os.path.exists(out_f): os.remove(out_f)
             
@@ -95,8 +94,9 @@ async def handle_photo(update: Update, context):
 
 if __name__ == '__main__':
     threading.Thread(target=run_health_server, daemon=True).start()
+    
     TOKEN = os.getenv("BOT_TOKEN")
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    print("Bot Started with Fixed Center Mode...")
+    print("Bot Started (Fixed Box Mode)...")
     app.run_polling()
