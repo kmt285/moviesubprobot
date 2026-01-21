@@ -33,23 +33,27 @@ def check_status(user_id):
     channels = get_fsub_channels()
     not_joined = []
     
-    # သင်ကိုယ်တိုင် (Admin) စမ်းသပ်နေတာဆိုရင် Join စရာမလိုဘဲ အောင်မြင်ရမယ်
+    # Admin ဖြစ်ရင် စစ်စရာမလိုဘဲ ကျော်ခိုင်းမယ်
     if user_id == ADMIN_ID:
         return []
 
     for ch in channels:
         try:
-            # ID ကို integer ဖြစ်အောင် သေချာအောင်လုပ်တယ်
-            ch_id = int(ch['id'])
-            member = bot.get_chat_member(ch_id, user_id)
+            # ID ကို String ရော Integer ရော စမ်းစစ်မယ်
+            ch_id = ch['id']
+            try:
+                member = bot.get_chat_member(int(ch_id), user_id)
+            except:
+                member = bot.get_chat_member(str(ch_id), user_id)
             
-            # Status စာရင်းထဲမှာ ရှိမရှိ စစ်မယ်
+            # Status အားလုံးကို စစ်ဆေးမယ် (Member, Admin, Owner အကုန်ပါရမယ်)
             if member.status not in ['member', 'administrator', 'creator']:
                 not_joined.append(ch)
+                
         except Exception as e:
-            # Bot က Channel ထဲမှာ Admin မဟုတ်ရင် ဒါမှမဟုတ် ID မှားရင် error တက်နိုင်တယ်
-            print(f"Error checking channel {ch['id']}: {e}")
-            # Error တက်ရင် User အဆင်ပြေအောင် Join ပြီးသားလို့ပဲ ယူဆပေးလိုက်မယ်
+            # Bot ကို Admin မခန့်ထားရင် ဒီ Error တက်ပါလိမ့်မယ်
+            print(f"Error checking {ch['id']}: {e}")
+            # Bot က စစ်ခွင့်မရှိရင် User ကို ပေးကြည့်လိုက်တာက ပိုကောင်းပါတယ်
             continue
             
     return not_joined
@@ -151,4 +155,5 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
