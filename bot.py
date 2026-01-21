@@ -100,29 +100,39 @@ async def index_movies(client, message):
         return await message.reply_text("Format: `/index [channel_id] [start_id] [end_id]`")
 
     try:
-        target_chat = int(message.command[1])
+        # ID ကို string ကနေ integer ပြောင်းလဲမှုကို သေချာအောင်လုပ်ခြင်း
+        input_chat = message.command[1]
+        if not input_chat.startswith("-100"):
+            target_chat = int("-100" + input_chat)
+        else:
+            target_chat = int(input_chat)
+            
         start = int(message.command[2])
         end = int(message.command[3])
-    except:
-        return await message.reply_text("ID တွေက ဂဏန်းပဲ ဖြစ်ရပါမယ်။")
+    except Exception as e:
+        return await message.reply_text(f"❌ Input Error: {str(e)}")
     
-    status = await message.reply_text("🔍 စစ်ဆေးနေပါပြီ...")
+    status = await message.reply_text("🔍 Channel ကို စတင်ချိတ်ဆက်နေပါပြီ...")
     count = 0
+
+    try:
+        # Bot က Channel ကို တကယ်မြင်ရလား အရင်စစ်မယ်
+        chat_info = await client.get_chat(target_chat)
+        await status.edit(f"✅ Connection အောင်မြင်သည်- {chat_info.title}\n🎥 Indexing စတင်နေပြီ...")
+    except Exception as e:
+        return await status.edit(f"❌ Channel Error: Bot က Channel ကို မမြင်ရပါ။ Bot ကို Admin ခန့်ထားတာ သေချာပါသလား?\nError: {str(e)}")
 
     for msg_id in range(start, end + 1):
         try:
             msg = await client.get_messages(target_chat, msg_id)
             
-            # Message ရှိမရှိ အရင်စစ်မယ်
-            if not msg or msg.empty:
-                continue
-
-            # ဘယ်လို Media မျိုးမဆို လက်ခံမယ် (Video, Document, etc.)
-            media = msg.video or msg.document or msg.animation
-            
-            if media:
-                file_name = getattr(media, 'file_name', f"File_{msg_id}")
-                movie_id = f"vid_{str(target_chat).replace('-100', '')}_{msg_id}"
+            if msg and (msg.video or msg.document):
+                media = msg.video or msg.document
+                file_name = getattr(media, 'file_name', f"Movie_{msg_id}")
+                
+                # Movie ID ကို Link အတွက် ပြုလုပ်ခြင်း
+                short_id = str(target_chat).replace("-100", "")
+                movie_id = f"vid_{short_id}_{msg_id}"
                 
                 await movies_col.update_one(
                     {"movie_id": movie_id},
@@ -134,20 +144,16 @@ async def index_movies(client, message):
                     }}, upsert=True
                 )
                 
-                bot_info = await client.get_me()
-                link = f"https://t.me/{bot_info.username}?start={movie_id}"
-                await client.send_message(message.chat.id, f"✅ **Found:** `{file_name}`\n🔗 Link: `{link}`")
                 count += 1
-                await asyncio.sleep(1.5)
-            else:
-                # Video မဟုတ်ရင် ဘာ message လဲဆိုတာ debug ပြမယ် (စမ်းသပ်ဆဲကာလအတွက်)
-                print(f"ID {msg_id} is not a video/file")
-
-        except Exception as e:
-            await message.reply_text(f"❌ Error at ID {msg_id}: {str(e)}")
+                # ၅ ခုမြောက်တိုင်း တစ်ခါ status update ပေးမယ်
+                if count % 5 == 0:
+                    await status.edit(f"⏳ လုပ်ဆောင်နေဆဲ... သိမ်းဆည်းပြီး: {count}")
+            
+            await asyncio.sleep(1.0) # Telegram Flood Wait ရှောင်ရန်
+        except Exception:
             continue
 
-    await status.edit(f"✅ လုပ်ငန်းစဉ် ပြီးဆုံးပါပြီ။\nစုစုပေါင်း သိမ်းဆည်းနိုင်မှု: {count}")
+    await status.edit(f"✅ ပြီးဆုံးပါပြီ။\nစုစုပေါင်း {count} ဖိုင် သိမ်းဆည်းပြီး။")
     
 # Admin Command: Database ထဲက movie အရေအတွက် ကြည့်ရန်
 @app.on_message(filters.command("stats") & filters.user(ADMINS))
@@ -159,5 +165,6 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     print("Bot is running...")
     app.run()
+
 
 
