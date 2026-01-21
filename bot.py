@@ -33,29 +33,36 @@ def check_status(user_id):
     channels = get_fsub_channels()
     not_joined = []
     
-    # Admin ဖြစ်ရင် အမြဲကျော်ခိုင်းမယ်
+    # ၁။ Admin ဖြစ်နေရင် ဘာမှစစ်စရာမလိုဘဲ ပေးကြည့်မယ်
     if str(user_id) == str(ADMIN_ID):
         return []
 
     for ch in channels:
         try:
-            # ID ကို String အဖြစ်ပြောင်းစစ်ကြည့်မယ်
-            ch_id = str(ch['id'])
-            if not ch_id.startswith('-100'):
-                # ID က -100 မပါရင် ဖြည့်ပေးမယ်
-                ch_id = f"-100{ch_id.replace('-', '')}" if not ch_id.startswith('-') else ch_id
-
-            member = bot.get_chat_member(int(ch_id), user_id)
+            # ၂။ Channel ID ကို သေချာစစ်ဆေးမယ်
+            raw_id = str(ch['id']).strip()
             
-            # User ရဲ့ status က အောက်ပါစာရင်းထဲမှာ မရှိရင် မ Join သေးဘူးလို့ သတ်မှတ်မယ်
-            # အထူးသဖြင့် status က 'left' သို့မဟုတ် 'kicked' ဖြစ်နေရင် မရပါဘူး
+            # -100 မပါရင် ဖြည့်ပေးမယ် (Telegram Channel ID တိုင်းမှာ -100 ပါရပါတယ်)
+            if not raw_id.startswith('-100'):
+                if raw_id.startswith('-'):
+                    clean_id = f"-100{raw_id[1:]}"
+                else:
+                    clean_id = f"-100{raw_id}"
+            else:
+                clean_id = raw_id
+
+            # ၃။ Telegram ဆီကနေ User status ကို တောင်းမယ်
+            member = bot.get_chat_member(int(clean_id), user_id)
+            
+            # ၄။ User ရဲ့ status ကို စစ်မယ်
+            # member, administrator, creator ထဲမှာ တစ်ခုမှမရှိရင် မ Join ရသေးဘူးလို့ ယူဆမယ်
             if member.status not in ['member', 'administrator', 'creator']:
                 not_joined.append(ch)
                 
         except Exception as e:
-            # Bot ကို Admin မခန့်ထားရင် 400 Bad Request: chat not found တက်ပါမယ်
-            print(f"DEBUG: Error checking {ch['id']} for {user_id}: {e}")
-            # စစ်လို့မရတဲ့ Channel ရှိရင် User အနှောင့်အယှက်မဖြစ်အောင် ကျော်ပေးလိုက်မယ်
+            # Bot က Channel ထဲမှာ Admin မဟုတ်ရင် ဒီနေရာမှာ Error တက်ပါမယ်
+            print(f"DEBUG Error for User {user_id} in Channel {ch['id']}: {e}")
+            # စစ်လို့မရတဲ့ Channel ရှိရင် User ကို ပေးသွားခိုင်းလိုက်တာ ပိုကောင်းပါတယ်
             continue
             
     return not_joined
@@ -156,6 +163,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
