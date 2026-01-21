@@ -18,7 +18,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 client = MongoClient(MONGO_URI)
 db = client['MovieBot']
 files_col = db['files']
-users_col = db['users']
+users_col = users_col
 
 # Force Join စစ်ဆေးလိုသော Channel စာရင်း (ဒီမှာ လိုသလောက် ထည့်နိုင်သည်)
 REQUIRED_CHANNELS = [
@@ -86,7 +86,7 @@ def register_user(message):
         "name": first_name
     }
     # users_col ဆိုတဲ့ collection အသစ်တစ်ခုကို သတ်မှတ်ပေးပါ (အပေါ်ပိုင်း Setup မှာ)
-    db['users'].update_one({"_id": user_id}, {"$set": user_data}, upsert=True)
+    users_col.update_one({"_id": user_id}, {"$set": user_data}, upsert=True)
 
 # --- ၄။ Main logic (Start Command & Force Sub) ---
 
@@ -125,12 +125,12 @@ def start(message):
 # --- Admin Stats & User List ---
 @bot.message_handler(commands=['stats'], func=lambda m: m.from_user.id == ADMIN_ID)
 def get_stats(message):
-    total = db['users'].count_documents({})
+    total = users_col.count_documents({})
     bot.reply_to(message, f"📊 **Bot Statistics**\n\nစုစုပေါင်း User အရေအတွက်: `{total}` ယောက်", parse_mode="Markdown")
 
 @bot.message_handler(commands=['users'], func=lambda m: m.from_user.id == ADMIN_ID)
 def list_users(message):
-    users = db['users'].find()
+    users = users_col.find()
     user_list_text = "ID | Username | Name\n" + "-"*30 + "\n"
     for u in users:
         user_list_text += f"{u['_id']} | @{u.get('username')} | {u.get('name')}\n"
@@ -142,29 +142,31 @@ def list_users(message):
     with open("users.txt", "rb") as f:
         bot.send_document(message.chat.id, f, caption="👥 Bot အသုံးပြုသူများစာရင်း")
 
-# --- Broadcast Feature ---
+# --- ပိုမိုကောင်းမွန်သော Broadcast Feature (စာရော ပုံပါ ရသည်) ---
 @bot.message_handler(commands=['broadcast'], func=lambda m: m.from_user.id == ADMIN_ID)
 def broadcast_command(message):
-    # /broadcast [စာသား] ပုံစံနဲ့ သုံးရပါမယ်
-    msg_text = message.text.replace("/broadcast", "").strip()
-    
-    if not msg_text:
-        return bot.reply_to(message, "❌ အသုံးပြုပုံ: `/broadcast မင်္ဂလာပါ` (သို့မဟုတ် စာကို Reply လုပ်ပါ)")
+    # Admin က တစ်ခုခုကို Reply ပြန်ပြီး /broadcast လို့ ရိုက်ရပါမယ်
+    if not message.reply_to_message:
+        return bot.reply_to(message, "❌ Broadcast လုပ်မည့် စာ သို့မဟုတ် ဓာတ်ပုံကို **Reply** လုပ်ပြီး `/broadcast` ဟု ရိုက်ပေးပါ။")
 
-    users = db['users'].find()
+    target_msg = message.reply_to_message
+    users = users_col.find()
     success = 0
     fail = 0
 
+    status_msg = bot.send_message(ADMIN_ID, "🚀 Broadcast စတင်နေပါပြီ...")
+
     for u in users:
         try:
-            bot.send_message(u['_id'], msg_text)
+            # copy_message ကို သုံးရင် စာသားရော၊ ပုံရော၊ ဗီဒီယိုပါ မူရင်းအတိုင်း ကူးယူပို့ပေးပါတယ်
+            bot.copy_message(u['_id'], ADMIN_ID, target_msg.message_id)
             success += 1
         except:
             fail += 1
             continue
             
-    bot.send_message(ADMIN_ID, f"📢 Broadcast ပြီးစီးပါပြီ။\n✅ အောင်မြင်: {success}\n❌ ကျရှုံး: {fail}")
-
+    bot.edit_message_text(f"📢 Broadcast ပြီးစီးပါပြီ။\n✅ အောင်မြင်: {success}\n❌ ကျရှုံး: {fail}", ADMIN_ID, status_msg.message_id)
+    
 @bot.callback_query_handler(func=lambda call: call.data.startswith('check_'))
 def check_callback(call):
     user_id = call.from_user.id
@@ -189,6 +191,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
