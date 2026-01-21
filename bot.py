@@ -79,28 +79,30 @@ def start(message):
     user_id = message.from_user.id
     args = message.text.split()
 
-    # Join ထားခြင်း ရှိမရှိ အရင်စစ်မည်
+    # ၁။ Join ထားခြင်း ရှိမရှိ အရင်စစ်ဆေးမည်
     not_joined = get_not_joined(user_id)
 
+    # ၂။ မ Join ရသေးသော Channel ရှိနေလျှင်
     if not_joined:
         markup = types.InlineKeyboardMarkup()
         for ch in not_joined:
             markup.add(types.InlineKeyboardButton("📢 Join Channel", url=ch['link']))
         
-        # Start link ပါရင် (ရုပ်ရှင်ကြည့်ဖို့ လာတာဆိုရင်) Try Again ထည့်ပေးမယ်
+        # ရုပ်ရှင် ID ပါလာရင် Try Again ခလုတ်မှာ အဲဒီ ID ထည့်ပေးမည်
         if len(args) > 1:
             file_db_id = args[1]
             markup.add(types.InlineKeyboardButton("♻️ အားလုံး Join ပြီးပါပြီ", callback_data=f"check_{file_db_id}"))
         else:
             markup.add(types.InlineKeyboardButton("♻️ အားလုံး Join ပြီးပါပြီ", callback_data="check_only"))
 
+        # ⚠️ အရေးကြီး - ဒီနေရာမှာ စာပို့ပြီးရင် function ကို ရပ်လိုက်ရပါမယ် (return သုံးရမည်)
         return bot.send_message(user_id, "⚠️ **ဗီဒီယိုကြည့်ရှုရန် အောက်ပါ Channel အားလုံးကို အရင် Join ပေးပါ။**", reply_markup=markup, parse_mode="Markdown")
 
-    # အားလုံး Join ပြီးသားဆိုရင်
+    # ၃။ အားလုံး Join ပြီးသား ဖြစ်မှသာ ဒီနေရာကို ရောက်လာမည်
     if len(args) > 1:
-        send_movie(user_id, args[1])
+        send_movie(user_id, args[1]) #
     else:
-        bot.send_message(user_id, "မင်္ဂလာပါ! ဇာတ်ကားကြည့်ရန် Link ကိုနှိပ်ပါ။")
+        bot.send_message(user_id, "မင်္ဂလာပါ! ဇာတ်ကားကြည့်ရန် Link ကိုနှိပ်ပါ။") #
 
 # --- ၅။ Callback Handlers (Try Again ခလုတ်များ) ---
 
@@ -128,4 +130,5 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
