@@ -94,28 +94,36 @@ async def index_movies(client, message):
     status = await message.reply_text("⏳ Processing...")
     count = 0
 
+# --- အစားထိုးရန် code အပိုင်းအစ ---
     for msg_id in range(start, end + 1):
         try:
             msg = await client.get_messages(target_chat, msg_id)
-            if msg.video or msg.document:
-                movie_id = f"vid_{target_chat}_{msg_id}".replace("-100", "")
+            # Video သာမက message မှာ media ပါရင် အကုန်စစ်မယ်
+            if msg and (msg.video or msg.document or msg.animation):
+                file_name = "Movie File"
+                if msg.video: file_name = msg.video.file_name
+                elif msg.document: file_name = msg.document.file_name
+
+                movie_id = f"vid_{str(target_chat).replace('-100', '')}_{msg_id}"
+                
                 await movies_col.update_one(
                     {"movie_id": movie_id},
                     {"$set": {
                         "movie_id": movie_id,
                         "from_chat_id": target_chat,
                         "msg_id": msg_id,
-                        "caption": msg.caption or ""
+                        "caption": msg.caption or file_name
                     }}, upsert=True
                 )
                 
-                # Poster အောက်မှာ ထည့်ဖို့ Link ထုတ်ပေးမယ်
                 bot_username = (await client.get_me()).username
                 link = f"https://t.me/{bot_username}?start={movie_id}"
-                await client.send_message(message.chat.id, f"✅ `{msg.video.file_name if msg.video else 'File'}`\n🔗 Link: `{link}`")
+                await client.send_message(message.chat.id, f"✅ **{file_name}**\n🔗 Link: `{link}`")
                 count += 1
-                await asyncio.sleep(1) # Flood wait ရှောင်ရန်
-        except Exception: continue
+                await asyncio.sleep(1.5)
+        except Exception as e:
+            print(f"Error at {msg_id}: {e}")
+            continue
 
     await status.edit(f"✅ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။ စုစုပေါင်း: {count}")
 
@@ -129,3 +137,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     print("Bot is running...")
     app.run()
+
