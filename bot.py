@@ -33,30 +33,28 @@ def check_status(user_id):
     channels = get_fsub_channels()
     not_joined = []
     
-    # ၁။ Admin စစ်ဆေးခြင်းကို အရင်ဆုံးလုပ်မယ်
-    # ADMIN_ID ရော user_id ရောကို string ပြောင်းပြီး တိုက်စစ်တာ အသေချာဆုံးပါ
     if str(user_id) == str(ADMIN_ID):
         return []
 
     for ch in channels:
         try:
-            # ၂။ Database ကလာတဲ့ ID ကို Integer ဖြစ်အောင် အသေအချာ ပြောင်းပါ
-            # -100 ပါသည်ဖြစ်စေ၊ မပါသည်ဖြစ်စေ int() ပြောင်းလိုက်ရင် Telegram API က နားလည်ပါတယ်
-            target_chat_id = int(ch['id'])
+            # ID ကို သေချာပေါက် integer ဖြစ်အောင် လုပ်ပါ
+            target_chat_id = int(str(ch['id']).strip())
 
-            # ၃။ Telegram API ကို ခေါ်ယူစစ်ဆေးခြင်း
             member = bot.get_chat_member(target_chat_id, user_id)
             
-            # ၄။ User Status စစ်ဆေးခြင်း
-            # member, administrator, creator မဟုတ်ရင် (ဆိုလိုတာက left သို့မဟုတ် kicked ဖြစ်နေရင်)
-            if member.status not in ['member', 'administrator', 'creator']:
+            # Status စစ်ဆေးခြင်း (left, kicked, null ဖြစ်နေရင် မ Join ဘူးလို့ ယူဆမယ်)
+            if member.status in ['left', 'kicked'] or member.status is None:
                 not_joined.append(ch)
                 
         except Exception as e:
-            # ၅။ Error တက်ခဲ့ရင် (ဥပမာ- ID မှားနေတာ သို့မဟုတ် Bot က Admin မဟုတ်တာ)
-            print(f"DEBUG: Error checking {ch['id']} for user {user_id}: {e}")
-            # ဒီနေရာမှာ အရေးကြီးပါတယ် - စစ်လို့မရရင် User ကို ပေးသွားခိုင်းလိုက်တာက 
-            # Bot အမြဲတမ်း ပိတ်မိမနေအောင် ကာကွယ်ပေးပါတယ်
+            # ဒီနေရာမှာ တက်တဲ့ Error ကို Console မှာ ကြည့်ပါ
+            print(f"❌ Error Checking Channel {ch['id']}: {e}")
+            
+            # အရေးကြီးဆုံးအချက် - အကယ်၍ Bot က Admin မဟုတ်ရင် 
+            # member status ကို စစ်လို့မရဘဲ Error တက်ပါလိမ့်မယ်။
+            # အဲဒီအခါ user ကို join ထားလဲ မရဘူးလို့ ပြနေတတ်ပါတယ်။
+            # ဒါကြောင့် error တက်ရင် join ပြီးသားလို့ ယူဆပေးလိုက်ပါ (Pass ပေးလိုက်ပါ)
             continue
             
     return not_joined
@@ -78,16 +76,18 @@ def add_channel(message):
     if message.from_user.id != ADMIN_ID: return
     try:
         args = message.text.split()
-        ch_id = int(args[1])
-        ch_link = args[2]
+        # ID ကို string အနေနဲ့ အရင်ယူ၊ space ဖြတ်ပြီးမှ int ပြောင်းပါ
+        ch_id = int(args[1].strip()) 
+        ch_link = args[2].strip()
+        
         settings_col.update_one(
             {"type": "fsub_config"},
             {"$push": {"channels": {"id": ch_id, "link": ch_link}}},
             upsert=True
         )
-        bot.reply_to(message, "✅ Channel ထည့်သွင်းပြီးပါပြီ။")
-    except:
-        bot.reply_to(message, "❌ အသုံးပြုပုံ: `/addch [Channel_ID] [Link]`")
+        bot.reply_to(message, f"✅ Channel ထည့်သွင်းပြီးပါပြီ။\nID: `{ch_id}`", parse_mode="Markdown")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}\nအသုံးပြုပုံ: `/addch [ID] [Link]`")
 
 @bot.message_handler(commands=['delch'])
 def del_channel(message):
@@ -157,6 +157,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
