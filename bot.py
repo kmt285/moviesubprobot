@@ -29,17 +29,29 @@ def get_fsub_channels():
     data = settings_col.find_one({"type": "fsub_config"})
     return data['channels'] if data else []
 
-# Join မထားတာ ရှိမရှိ စစ်ဆေးခြင်း
 def check_status(user_id):
     channels = get_fsub_channels()
     not_joined = []
+    
+    # သင်ကိုယ်တိုင် (Admin) စမ်းသပ်နေတာဆိုရင် Join စရာမလိုဘဲ အောင်မြင်ရမယ်
+    if user_id == ADMIN_ID:
+        return []
+
     for ch in channels:
         try:
-            status = bot.get_chat_member(ch['id'], user_id).status
-            if status not in ['member', 'administrator', 'creator']:
+            # ID ကို integer ဖြစ်အောင် သေချာအောင်လုပ်တယ်
+            ch_id = int(ch['id'])
+            member = bot.get_chat_member(ch_id, user_id)
+            
+            # Status စာရင်းထဲမှာ ရှိမရှိ စစ်မယ်
+            if member.status not in ['member', 'administrator', 'creator']:
                 not_joined.append(ch)
-        except:
+        except Exception as e:
+            # Bot က Channel ထဲမှာ Admin မဟုတ်ရင် ဒါမှမဟုတ် ID မှားရင် error တက်နိုင်တယ်
+            print(f"Error checking channel {ch['id']}: {e}")
+            # Error တက်ရင် User အဆင်ပြေအောင် Join ပြီးသားလို့ပဲ ယူဆပေးလိုက်မယ်
             continue
+            
     return not_joined
 
 # Video ပို့ပေးသည့် သီးသန့် Function
@@ -139,3 +151,4 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
