@@ -33,31 +33,32 @@ def check_status(user_id):
     channels = get_fsub_channels()
     not_joined = []
     
-    # Admin ဖြစ်ရင် စစ်စရာမလိုဘဲ ကျော်ခိုင်းမယ်
-    if user_id == ADMIN_ID:
+    # Admin ဖြစ်ရင် အမြဲကျော်ခိုင်းမယ်
+    if str(user_id) == str(ADMIN_ID):
         return []
 
     for ch in channels:
         try:
-            # ID ကို String ရော Integer ရော စမ်းစစ်မယ်
-            ch_id = ch['id']
-            try:
-                member = bot.get_chat_member(int(ch_id), user_id)
-            except:
-                member = bot.get_chat_member(str(ch_id), user_id)
+            # ID ကို String အဖြစ်ပြောင်းစစ်ကြည့်မယ်
+            ch_id = str(ch['id'])
+            if not ch_id.startswith('-100'):
+                # ID က -100 မပါရင် ဖြည့်ပေးမယ်
+                ch_id = f"-100{ch_id.replace('-', '')}" if not ch_id.startswith('-') else ch_id
+
+            member = bot.get_chat_member(int(ch_id), user_id)
             
-            # Status အားလုံးကို စစ်ဆေးမယ် (Member, Admin, Owner အကုန်ပါရမယ်)
+            # User ရဲ့ status က အောက်ပါစာရင်းထဲမှာ မရှိရင် မ Join သေးဘူးလို့ သတ်မှတ်မယ်
+            # အထူးသဖြင့် status က 'left' သို့မဟုတ် 'kicked' ဖြစ်နေရင် မရပါဘူး
             if member.status not in ['member', 'administrator', 'creator']:
                 not_joined.append(ch)
                 
         except Exception as e:
-            # Bot ကို Admin မခန့်ထားရင် ဒီ Error တက်ပါလိမ့်မယ်
-            print(f"Error checking {ch['id']}: {e}")
-            # Bot က စစ်ခွင့်မရှိရင် User ကို ပေးကြည့်လိုက်တာက ပိုကောင်းပါတယ်
+            # Bot ကို Admin မခန့်ထားရင် 400 Bad Request: chat not found တက်ပါမယ်
+            print(f"DEBUG: Error checking {ch['id']} for {user_id}: {e}")
+            # စစ်လို့မရတဲ့ Channel ရှိရင် User အနှောင့်အယှက်မဖြစ်အောင် ကျော်ပေးလိုက်မယ်
             continue
             
     return not_joined
-
 # Video ပို့ပေးသည့် သီးသန့် Function
 def send_movie(user_id, file_db_id):
     try:
@@ -155,5 +156,6 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
