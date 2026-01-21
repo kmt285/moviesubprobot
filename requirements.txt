@@ -1,5 +1,4 @@
 pyrogram
 tgcrypto
-motor
-dnspython
 flask
+motor
