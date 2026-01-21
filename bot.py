@@ -11,8 +11,8 @@ bot = telebot.TeleBot(API_TOKEN)
 # စစ်ဆေးလိုသော Channel စာရင်း (Rose Bot တွင် /id ဖြင့် ID ယူပါ)
 # -100 ပါသော ID အပြည့်အစုံ ထည့်ရပါမည်
 REQUIRED_CHANNELS = [
-    {"id": -100123456789, "link": "https://t.me/channel_one"},
-    {"id": -100987654321, "link": "https://t.me/channel_two"},
+    {"id": --1003622691900, "link": "https://t.me/mmsubchannelfu"},
+    {"id": --1003179962336, "link": "https://t.me/moviesbydatahouse"},
     # လိုအပ်သလောက် ထပ်တိုးနိုင်ပါသည်
 ]
 
@@ -86,3 +86,4 @@ def check_callback(call):
 if __name__ == "__main__":
     print("Bot is running...")
     bot.infinity_polling()
+
