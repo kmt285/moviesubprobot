@@ -13,7 +13,7 @@ MONGO_URI = os.environ.get("MONGO_URI", "your_mongodb_uri")
 
 # Force Join စစ်မည့် Channel များ
 # Example: [-10012345678, -10087654321]
-AUTH_CHANNELS = [-100xxxxxxxxx] 
+AUTH_CHANNELS = [-1003622691900, -1003629942364] 
 
 client = AsyncIOMotorClient(MONGO_URI)
 db = client.movie_bot
@@ -117,4 +117,5 @@ async def update_movies(client, message):
     await status_msg.edit(f"ပြီးဆုံးပါပြီ။ စုစုပေါင်း {count} ဖိုင် သိမ်းဆည်းပြီး။")
 
 app.run()
+
 
