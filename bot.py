@@ -1,119 +1,93 @@
-import asyncio
 import os
-import threading
+import telebot
+from telebot import types
+from pymongo import MongoClient
 from flask import Flask
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.errors import UserNotParticipant, FloodWait
-from motor.motor_asyncio import AsyncIOMotorClient
+from threading import Thread
+from dotenv import load_dotenv
 
-# --- Flask Server ---
-flask_app = Flask(__name__)
-@flask_app.route('/')
-def home(): return "Bot status: Online"
+load_dotenv()
 
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host='0.0.0.0', port=port)
+# Setup
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+MONGO_URI = os.getenv('MONGO_URI')
+FSUB_CHANNEL = int(os.getenv('FSUB_CHANNEL'))
+CHANNEL_URL = os.getenv('CHANNEL_URL')
+ADMIN_ID = int(os.getenv('ADMIN_ID'))
 
-# --- Configurations ---
-API_ID = int(os.environ.get("API_ID", "12345"))
-API_HASH = os.environ.get("API_HASH", "your_hash")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "your_token")
-MONGO_URI = os.environ.get("MONGO_URI", "your_mongodb_uri")
-ADMINS = [7812553563]
-AUTH_CHANNELS = [-1003622691900, -1003629942364]
+bot = telebot.TeleBot(BOT_TOKEN)
+db = MongoClient(MONGO_URI)['MovieBot']['files']
 
-# Database
-client_db = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-db = client_db.movie_bot
-movies_collection = db.movies
+app = Flask('')
 
-app = Client("movie_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+@app.route('/')
+def home(): return "Bot is running!"
 
-# --- Functions ---
-async def is_subscribed(user_id):
-    for chat_id in AUTH_CHANNELS:
-        try:
-            member = await app.get_chat_member(chat_id, user_id)
-            if member.status in ["kicked", "left"]: return False
-        except UserNotParticipant: return False
-        except Exception: continue
-    return True
-
-# --- Handlers ---
-
-@app.on_message(filters.command("start") & filters.private)
-async def start_handler(client, message):
-    user_id = message.from_user.id
-    if len(message.command) > 1:
-        movie_id = message.command[1]
-        if not await is_subscribed(user_id):
-            buttons = []
-            for i, chat_id in enumerate(AUTH_CHANNELS, 1):
-                try:
-                    chat = await client.get_chat(chat_id)
-                    link = chat.invite_link or f"https://t.me/c/{str(chat_id).replace('-100','')}/1"
-                    buttons.append([InlineKeyboardButton(f"Join Channel {i}", url=link)])
-                except: continue
-            buttons.append([InlineKeyboardButton("Joined - Try Again", url=f"https://t.me/{(await client.get_me()).username}?start={movie_id}")])
-            return await message.reply_text("🎬 ရုပ်ရှင်ကြည့်ရန် အရင် Join ပါ။", reply_markup=InlineKeyboardMarkup(buttons))
-
-        movie = await movies_collection.find_one({"movie_id": movie_id})
-        if movie:
-            try:
-                await client.copy_message(chat_id=user_id, from_chat_id=movie['channel_id'], message_id=movie['msg_id'])
-            except Exception as e:
-                await message.reply_text(f"❌ ပို့မရပါ- {str(e)}")
-        else:
-            await message.reply_text("❌ ရုပ်ရှင်ရှာမတွေ့ပါ။")
-    else:
-        await message.reply_text("Welcome! ပိုစတာအောက်က link ကနေတစ်ဆင့် ရုပ်ရှင်ကြည့်နိုင်ပါတယ်။")
-
-@app.on_message(filters.command("index") & filters.user(ADMINS))
-async def index_movies(client, message):
-    if len(message.command) < 4:
-        return await message.reply_text("Format: `/index [channel_id] [start_id] [end_id]`")
-
+# Force Join စစ်ဆေးသည့် Function
+def is_subscribed(user_id):
     try:
-        target_chat = int(message.command[1])
-        start = int(message.command[2])
-        end = int(message.command[3])
+        status = bot.get_chat_member(FSUB_CHANNEL, user_id).status
+        return status in ['member', 'administrator', 'creator']
     except:
-        return await message.reply_text("ဂဏန်းများသာ ရိုက်ထည့်ပါ။")
+        return False
 
-    status = await message.reply_text("🔍 စစ်ဆေးနေသည်...")
-    count = 0
+# Admin အတွက် File သိမ်းသည့် Command
+@bot.message_handler(content_types=['video', 'document'])
+def save_file(message):
+    if message.from_user.id != ADMIN_ID:
+        return
 
-    for msg_id in range(start, end + 1):
+    file_id = message.video.file_id if message.content_type == 'video' else message.document.file_id
+    caption = message.caption or "No Title"
+    
+    # DB ထဲသိမ်းပြီး ID ထုတ်ပေးမယ်
+    res = db.insert_one({"file_id": file_id, "caption": caption})
+    share_link = f"https://t.me/{(bot.get_me()).username}?start={res.inserted_id}"
+    
+    bot.reply_to(message, f"✅ သိမ်းဆည်းပြီးပါပြီ!\n\nLink: `{share_link}`", parse_mode="Markdown")
+
+# /start logic (File ထုတ်ပေးခြင်း နှင့် Force Join)
+@bot.message_handler(commands=['start'])
+def start(message):
+    args = message.text.split()
+    user_id = message.from_user.id
+
+    if len(args) > 1:
+        file_db_id = args[1]
+        
+        # Force Join စစ်မယ်
+        if not is_subscribed(user_id):
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_URL))
+            markup.add(types.InlineKeyboardButton("♻️ Try Again", url=f"https://t.me/{(bot.get_me()).username}?start={file_db_id}"))
+            
+            return bot.send_message(user_id, "❌ ဗီဒီယိုကြည့်ရှုရန် ကျွန်ုပ်တို့၏ Channel ကို အရင် Join ပေးပါ။", reply_markup=markup)
+
+        # File ထုတ်ပေးမယ်
+        data = db.find_one({"_id": file_db_id}) # မှတ်ချက်- တကယ်တမ်းစာရင် ObjectId နဲ့စစ်ရပါတယ်
+        # ရိုးရှင်းအောင် string ID နဲ့ပဲပြထားပါတယ်
         try:
-            # ဗားရှင်းအသစ်များအတွက် ပိုမိုသေချာသော နည်းလမ်းဖြင့် ဆွဲထုတ်ခြင်း
-            msg = await client.get_messages(target_chat, msg_id)
-            
-            if msg and not msg.empty and (msg.video or msg.document):
-                media = msg.video or msg.document
-                f_name = getattr(media, 'file_name', f"Movie_{msg_id}")
-                m_id = f"vid_{str(target_chat).replace('-100', '')}_{msg_id}"
+            from bson.objectid import ObjectId
+            data = db.find_one({"_id": ObjectId(file_db_id)})
+            if data:
+                bot.send_video(user_id, data['file_id'], caption=data['caption'])
+            else:
+                bot.send_message(user_id, "ဖိုင်ရှာမတွေ့ပါ။")
+        except:
+            bot.send_message(user_id, "Invalid Link.")
+    else:
+        bot.send_message(user_id, "မင်္ဂလာပါ! ဇာတ်ကား link ကိုနှိပ်ပြီး ဝင်ရောက်ကြည့်ရှုပါ။")
 
-                await movies_collection.update_one(
-                    {"movie_id": m_id},
-                    {"$set": {"movie_id": m_id, "channel_id": target_chat, "msg_id": msg_id, "file_name": f_name}},
-                    upsert=True
-                )
-                count += 1
-                if count % 5 == 0:
-                    await status.edit(f"⏳ သိမ်းဆည်းဆဲ... {count} ကား (ID: {msg_id})")
-            
-            await asyncio.sleep(1.2) # Flood Wait ရှောင်ရန်
+# အသုံးဝင်မယ့် Admin Commands
+@bot.message_handler(commands=['stats'])
+def stats(message):
+    if message.from_user.id == ADMIN_ID:
+        count = db.count_documents({})
+        bot.reply_to(message, f"စုစုပေါင်း သိမ်းထားသော ဇာတ်ကားအရေအတွက်: {count}")
 
-        except FloodWait as e:
-            await asyncio.sleep(e.value)
-        except Exception as e:
-            print(f"Error at ID {msg_id}: {e}")
-            continue
-
-    await status.edit(f"✅ လုပ်ငန်းစဉ်ပြီးဆုံး။ စုစုပေါင်း: {count}")
+def run():
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
-    app.run()
+    Thread(target=run).start()
+    bot.infinity_polling()
