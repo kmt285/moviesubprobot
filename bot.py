@@ -5,6 +5,9 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 from flask import Flask
 from threading import Thread
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Setup
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -21,7 +24,7 @@ app = Flask('')
 @app.route('/')
 def home(): return "Bot is running!"
 
-# Database ကနေ Channel List ကို ဆွဲယူတဲ့ Function
+# Database ကနေ Channel List ကို ဆွဲယူခြင်း
 def get_fsub_channels():
     data = settings_col.find_one({"type": "fsub_config"})
     return data['channels'] if data else []
@@ -36,9 +39,19 @@ def check_status(user_id):
             if status not in ['member', 'administrator', 'creator']:
                 not_joined.append(ch)
         except:
-            # Bot ကို Admin မခန့်ထားရင် သို့မဟုတ် ID မှားရင် ကျော်သွားမယ်
             continue
     return not_joined
+
+# Video ပို့ပေးသည့် သီးသန့် Function
+def send_movie(user_id, file_db_id):
+    try:
+        data = files_col.find_one({"_id": ObjectId(file_db_id)})
+        if data:
+            bot.send_video(user_id, data['file_id'], caption=data['caption'])
+        else:
+            bot.send_message(user_id, "❌ ဖိုင်ရှာမတွေ့ပါ။")
+    except Exception as e:
+        bot.send_message(user_id, "❌ Link မှားယွင်းနေပါသည်။")
 
 # --- Admin Commands ---
 
@@ -46,11 +59,9 @@ def check_status(user_id):
 def add_channel(message):
     if message.from_user.id != ADMIN_ID: return
     try:
-        # အသုံးပြုပုံ - /addch -100123456 https://t.me/link
         args = message.text.split()
         ch_id = int(args[1])
         ch_link = args[2]
-        
         settings_col.update_one(
             {"type": "fsub_config"},
             {"$push": {"channels": {"id": ch_id, "link": ch_link}}},
@@ -75,20 +86,18 @@ def list_channel(message):
         msg += f"ID: `{c['id']}`\nLink: {c['link']}\n\n"
     bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-# --- File Handling ---
+# --- File Handling (Admin Only) ---
 
 @bot.message_handler(content_types=['video', 'document'])
 def handle_file(message):
     if message.from_user.id != ADMIN_ID: return
-    
     file_id = message.video.file_id if message.content_type == 'video' else message.document.file_id
     caption = message.caption or "No Title"
-    
     res = files_col.insert_one({"file_id": file_id, "caption": caption})
     share_link = f"https://t.me/{(bot.get_me()).username}?start={res.inserted_id}"
     bot.reply_to(message, f"✅ သိမ်းပြီးပါပြီ!\n\nLink: `{share_link}`", parse_mode="Markdown")
 
-# --- Start Logic ---
+# --- User Start Logic ---
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -103,25 +112,30 @@ def start(message):
             markup = types.InlineKeyboardMarkup()
             for ch in not_joined:
                 markup.add(types.InlineKeyboardButton("📢 Join Channel", url=ch['link']))
-            
-            # ပြန်စစ်မယ့် ခလုတ်
-            markup.add(types.InlineKeyboardButton("♻️ Try Again", url=f"https://t.me/{(bot.get_me()).username}?start={file_db_id}"))
-            
+            markup.add(types.InlineKeyboardButton("♻️ Try Again", callback_data=f"check_{file_db_id}"))
             return bot.send_message(user_id, "❌ ဗီဒီယိုကြည့်ရန် အောက်ပါ Channel များကို အရင် Join ပေးပါ။", reply_markup=markup)
 
-        # File ထုတ်ပေးခြင်း
-        try:
-            data = files_col.find_one({"_id": ObjectId(file_db_id)})
-            if data:
-                bot.send_video(user_id, data['file_id'], caption=data['caption'])
-        except:
-            bot.send_message(user_id, "ဖိုင်ရှာမတွေ့ပါ။")
+        send_movie(user_id, file_db_id)
     else:
         bot.send_message(user_id, "မင်္ဂလာပါ! ဇာတ်ကားကြည့်ရန် Link ကိုနှိပ်ပါ။")
+
+# Try Again ခလုတ်အတွက် Callback Handler
+@bot.callback_query_handler(func=lambda call: call.data.startswith('check_'))
+def check_callback(call):
+    user_id = call.from_user.id
+    file_db_id = call.data.split("_")[1]
+    not_joined = check_status(user_id)
+    
+    if not_joined:
+        bot.answer_callback_query(call.id, "❌ Channel အားလုံးမ Join ရသေးပါ!", show_alert=True)
+    else:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        send_movie(user_id, file_db_id)
 
 def run():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
 if __name__ == "__main__":
     Thread(target=run).start()
+    print("Bot is running...")
     bot.infinity_polling()
