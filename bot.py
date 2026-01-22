@@ -104,9 +104,7 @@ def start(message):
         markup = types.InlineKeyboardMarkup()
         for ch in not_joined:
             markup.add(types.InlineKeyboardButton("📢 Join Channel", url=ch['link']))
-
-        bot_username = (bot.get_me()).username
-        markup.add(types.InlineKeyboardButton("🔙 Back to BOT", url=f"https://t.me/{bot_username}"))
+            
         # ရုပ်ရှင် ID ပါလာရင် Try Again ခလုတ်မှာ အဲဒီ ID ထည့်ပေးမည်
         if len(args) > 1:
             file_db_id = args[1]
@@ -193,6 +191,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
