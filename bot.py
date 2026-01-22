@@ -57,7 +57,7 @@ def send_movie(user_id, file_db_id):
     try:
         data = files_col.find_one({"_id": ObjectId(file_db_id)})
         if data:
-            bot.send_video(user_id, data['file_id'], caption=data['caption'])
+            bot.send_video(user_id, data['file_id'], caption=data['caption'], protect_content=True)
         else:
             bot.send_message(user_id, "❌ ဖိုင်ရှာမတွေ့ပါ။")
     except Exception as e:
@@ -159,7 +159,7 @@ def broadcast_command(message):
     for u in users:
         try:
             # copy_message ကို သုံးရင် စာသားရော၊ ပုံရော၊ ဗီဒီယိုပါ မူရင်းအတိုင်း ကူးယူပို့ပေးပါတယ်
-            bot.copy_message(u['_id'], ADMIN_ID, target_msg.message_id)
+            bot.copy_message(u['_id'], ADMIN_ID, target_msg.message_id, protect_content=True)
             success += 1
         except:
             fail += 1
@@ -191,6 +191,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
