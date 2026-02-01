@@ -1,6 +1,6 @@
-pyTelegramBotAPI
-pymongo[srv]
-dnspython
-flask
+pyrogram
+tgcrypto
+google-generativeai
+pymongo
 python-dotenv
-gunicorn
+flask
