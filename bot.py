@@ -116,12 +116,12 @@ def start(message):
         # ရုပ်ရှင် ID ပါလာရင် Try Again ခလုတ်မှာ အဲဒီ ID ထည့်ပေးမည်
         if len(args) > 1:
             file_db_id = args[1]
-            markup.add(types.InlineKeyboardButton("♻️ အားလုံး Join ပြီးပါပြီ", callback_data=f"check_{file_db_id}"))
+            markup.add(types.InlineKeyboardButton("♻️ Join ပြီးပါပြီ", callback_data=f"check_{file_db_id}"))
         else:
-            markup.add(types.InlineKeyboardButton("♻️ အားလုံး Join ပြီးပါပြီ", callback_data="check_only"))
+            markup.add(types.InlineKeyboardButton("♻️ Join ပြီးပါပြီ", callback_data="check_only"))
 
         # ⚠️ အရေးကြီး - ဒီနေရာမှာ စာပို့ပြီးရင် function ကို ရပ်လိုက်ရပါမယ် (return သုံးရမည်)
-        return bot.send_message(user_id, "⚠️ **ဗီဒီယိုကြည့်ရှုရန် အောက်ပါ Channel အားလုံးကို အရင် Join ပေးပါ။**", reply_markup=markup, parse_mode="Markdown")
+        return bot.send_message(user_id, "⚠️ **ဗီဒီယိုကြည့်ရှုရန် အောက်ပါ Channelကို အရင် Join ပေးပါ။**", reply_markup=markup, parse_mode="Markdown")
 
     # ၃။ အားလုံး Join ပြီးသား ဖြစ်မှသာ ဒီနေရာကို ရောက်လာမည်
     if len(args) > 1:
@@ -194,7 +194,7 @@ def check_callback(call):
     not_joined = get_not_joined(user_id)
     
     if not_joined:
-        bot.answer_callback_query(call.id, "❌ Channel အားလုံး မ Join ရသေးပါ။", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Channel မ Join ရသေးပါ။", show_alert=True)
     else:
         bot.delete_message(call.message.chat.id, call.message.message_id)
         # ရုပ်ရှင်ကြည့်ဖို့ လာတာဆိုရင် ရုပ်ရှင်ပို့ပေးမယ်
@@ -210,6 +210,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
