@@ -14,7 +14,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 MONGO_URI = os.getenv('MONGO_URI')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
-DAILY_LIMIT = 6
+FREE_DAILY_LIMIT = 10
+FREE_SAVE_LIMIT = 2
 
 bot = telebot.TeleBot(BOT_TOKEN)
 client = MongoClient(MONGO_URI)
@@ -56,49 +57,84 @@ def get_not_joined(user_id):
 
 # Video ပို့ပေးသည့် Function
 def send_movie(user_id, file_db_id):
-    # --- (က) Daily Limit စစ်ဆေးခြင်း ---
-    if user_id != ADMIN_ID: # Admin မဟုတ်မှ စစ်မယ်
+    # Default Settings
+    protect_content = False  # ပုံမှန်အားဖြင့် Save ခွင့်ပြုမည်
+    is_vip = False
+    
+    # --- (က) User Status စစ်ဆေးခြင်း ---
+    if user_id != ADMIN_ID:
         user = users_col.find_one({"_id": user_id})
         
-        # User Database ထဲမရှိရင် (မတော်တဆ) ကျော်သွားမယ်
         if user:
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            last_reset = user.get('last_reset_date')
-            daily_count = user.get('daily_count', 0)
-
-            # ရက်မတူတော့ရင် (နေ့ကူးသွားရင်) count ကို 0 ပြန်ထားမယ်
-            if last_reset != today_str:
-                users_col.update_one({"_id": user_id}, {"$set": {"daily_count": 0, "last_reset_date": today_str}})
-                daily_count = 0
+            is_vip = user.get('is_vip', False)
             
-            # Limit ပြည့်မပြည့် စစ်မယ်
-            if daily_count >= DAILY_LIMIT:
-                return bot.send_message(user_id, f"⚠️ **ဒီနေ့အတွက် ကြည့်ရှုခွင့် ပြည့်သွားပါပြီ။**\n\n(Free Member သည် တစ်ရက်လျှင် {DAILY_LIMIT} ကားသာကြည့်နိုင်သည်)\n 💎Join VIP member for Unlimited💎", parse_mode="Markdown")
+            # VIP မဟုတ်ရင် Limit တွေ စစ်တော့မယ်
+            if not is_vip:
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                last_reset = user.get('last_reset_date')
+                
+                # Counter တွေကို ယူမယ် (မရှိရင် 0)
+                daily_total = user.get('daily_total', 0)
+                daily_save = user.get('daily_save', 0)
 
-    # --- (ခ) ပုံမှန် Video ပို့ပေးခြင်း ---
+                # ရက်ကူးသွားရင် Reset လုပ်မယ်
+                if last_reset != today_str:
+                    users_col.update_one({"_id": user_id}, {
+                        "$set": {
+                            "daily_total": 0, 
+                            "daily_save": 0, 
+                            "last_reset_date": today_str
+                        }
+                    })
+                    daily_total = 0
+                    daily_save = 0
+                
+                # ၁။ Total Limit (10 ကား) ပြည့်မပြည့် စစ်မယ်
+                if daily_total >= FREE_DAILY_LIMIT:
+                    return bot.send_message(user_id, 
+                        f"⚠️ **ဒီနေ့အတွက် ကြည့်ရှုခွင့် ပြည့်သွားပါပြီ။**\n\n"
+                        f"Free User များသည် တစ်ရက်လျှင် {FREE_DAILY_LIMIT} ကားသာ ကြည့်ရှုနိုင်ပါသည်။\n 24နာရီပြည့်မှ ပြန်လည်ကြိုးစားပါ။"
+                        f"Unlimited ကြည့်ရှုလိုပါက 💎 VIP ဝယ်ယူနိုင်ပါသည်။ @moviestoreadmin", 
+                        parse_mode="Markdown")
+                
+                # ၂။ Save Limit (2 ကား) ပြည့်မပြည့် စစ်မယ်
+                # Save Limit ပြည့်သွားရင် protect_content ကို True ပေးလိုက်မယ် (Save မရတော့ဘူး)
+                if daily_save >= FREE_SAVE_LIMIT:
+                    protect_content = True
+                    # User ကို အသိပေးချင်ရင် (Optional)
+                    # bot.send_message(user_id, "⚠️ Save Limit ပြည့်သွားသဖြင့် ဤဇာတ်ကားကို Save/Forward လုပ်၍ မရနိုင်ပါ။ 24နာရီပြည့်မှ ပြန်လည်ကြိုးစားပါ")
+
+    # --- (ခ) Video ပို့ပေးခြင်း ---
     try:
         data = files_col.find_one({"_id": ObjectId(file_db_id)})
         if data:
-            # Database ထဲက ပုံသေစာသားကို ရှာပါ
+            # Caption ပြင်ဆင်ခြင်း
             config = config_col.find_one({"type": "caption_config"})
             permanent_text = config['text'] if config else ""
             
-            # မူရင်း Caption နဲ့ ပုံသေစာသားကို ပေါင်းပါ
-            final_caption = f"{data['caption']}\n\n{permanent_text}"
+            # VIP Status ပေါ်မူတည်ပြီး Caption အနည်းငယ် ပြောင်းလို့ရ (Optional)
+            status_text = "🌟 Premium User" if is_vip else "👤 Free Account"
+            final_caption = f"{data['caption']}\n\n{permanent_text}\n\n{status_text}"
             
-            # ဗီဒီယိုပို့ပါ
-            bot.send_video(user_id, data['file_id'], caption=final_caption)
+            # ဗီဒီယိုပို့ပါ (protect_content ကို ဒီနေရာမှာ သုံးပါပြီ)
+            bot.send_video(user_id, data['file_id'], caption=final_caption, protect_content=protect_content)
             
-            # --- (ဂ) ပို့ပြီးရင် Count တိုးခြင်း ---
-            if user_id != ADMIN_ID:
+            # --- (ဂ) Database Update လုပ်ခြင်း ---
+            if user_id != ADMIN_ID and not is_vip:
+                update_query = {"$inc": {"daily_total": 1}}
+                
+                # Save လုပ်ခွင့်ရတဲ့ အလုံးဆိုရင် daily_save ကိုပါ +1 တိုးမယ်
+                if not protect_content:
+                    update_query["$inc"]["daily_save"] = 1
+                    
                 users_col.update_one(
                     {"_id": user_id},
-                    {"$inc": {"daily_count": 1}, "$set": {"last_reset_date": datetime.now().strftime("%Y-%m-%d")}}
+                    update_query
                 )
         else:
             bot.send_message(user_id, "❌ ဖိုင်ရှာမတွေ့ပါ။")
     except Exception as e:
-        print(f"Error sending movie: {e}")
+        print(f"Error: {e}")
         bot.send_message(user_id, "❌ Link မှားယွင်းနေပါသည်။")
 
 # --- ၃။ Admin Commands (File Upload) ---
@@ -191,6 +227,26 @@ def list_users(message):
     with open("users.txt", "rb") as f:
         bot.send_document(message.chat.id, f, caption="👥 Bot အသုံးပြုသူများစာရင်း")
 
+# --- VIP Management Commands ---
+@bot.message_handler(commands=['addvip'], func=lambda m: m.from_user.id == ADMIN_ID)
+def add_vip(message):
+    try:
+        # Command ပုံစံ: /addvip 123456789
+        user_id_to_add = int(message.text.split()[1])
+        users_col.update_one({"_id": user_id_to_add}, {"$set": {"is_vip": True}}, upsert=True)
+        bot.reply_to(message, f"✅ User ID `{user_id_to_add}` ကို VIP အဖြစ် သတ်မှတ်လိုက်ပါပြီ။", parse_mode="Markdown")
+    except:
+        bot.reply_to(message, "❌ ID မှားယွင်းနေပါသည်။\nအသုံးပြုပုံ: `/addvip <user_id>`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['removevip'], func=lambda m: m.from_user.id == ADMIN_ID)
+def remove_vip(message):
+    try:
+        user_id_to_remove = int(message.text.split()[1])
+        users_col.update_one({"_id": user_id_to_remove}, {"$set": {"is_vip": False}})
+        bot.reply_to(message, f"User ID `{user_id_to_remove}` မှ VIP ကို ဖယ်ရှားလိုက်ပါပြီ။", parse_mode="Markdown")
+    except:
+        bot.reply_to(message, "❌ Error.")
+
 # --- ပိုမိုကောင်းမွန်သော Broadcast Feature (စာရော ပုံပါ ရသည်) ---
 @bot.message_handler(commands=['broadcast'], func=lambda m: m.from_user.id == ADMIN_ID)
 def broadcast_command(message):
@@ -240,6 +296,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
