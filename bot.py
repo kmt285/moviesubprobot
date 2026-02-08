@@ -1,5 +1,6 @@
 import os
 import telebot
+from datetime import datetime
 from telebot import types
 from pymongo import MongoClient
 from bson.objectid import ObjectId
@@ -13,6 +14,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 MONGO_URI = os.getenv('MONGO_URI')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
+DAILY_LIMIT = 6
 
 bot = telebot.TeleBot(BOT_TOKEN)
 client = MongoClient(MONGO_URI)
@@ -54,6 +56,26 @@ def get_not_joined(user_id):
 
 # Video ပို့ပေးသည့် Function
 def send_movie(user_id, file_db_id):
+    # --- (က) Daily Limit စစ်ဆေးခြင်း ---
+    if user_id != ADMIN_ID: # Admin မဟုတ်မှ စစ်မယ်
+        user = users_col.find_one({"_id": user_id})
+        
+        # User Database ထဲမရှိရင် (မတော်တဆ) ကျော်သွားမယ်
+        if user:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            last_reset = user.get('last_reset_date')
+            daily_count = user.get('daily_count', 0)
+
+            # ရက်မတူတော့ရင် (နေ့ကူးသွားရင်) count ကို 0 ပြန်ထားမယ်
+            if last_reset != today_str:
+                users_col.update_one({"_id": user_id}, {"$set": {"daily_count": 0, "last_reset_date": today_str}})
+                daily_count = 0
+            
+            # Limit ပြည့်မပြည့် စစ်မယ်
+            if daily_count >= DAILY_LIMIT:
+                return bot.send_message(user_id, f"⚠️ **ဒီနေ့အတွက် ကြည့်ရှုခွင့် ပြည့်သွားပါပြီ။**\n\n(Free Member သည် တစ်ရက်လျှင် {DAILY_LIMIT} ကားသာကြည့်နိုင်သည်)\n 💎Join VIP member for Unlimited💎", parse_mode="Markdown")
+
+    # --- (ခ) ပုံမှန် Video ပို့ပေးခြင်း ---
     try:
         data = files_col.find_one({"_id": ObjectId(file_db_id)})
         if data:
@@ -64,11 +86,19 @@ def send_movie(user_id, file_db_id):
             # မူရင်း Caption နဲ့ ပုံသေစာသားကို ပေါင်းပါ
             final_caption = f"{data['caption']}\n\n{permanent_text}"
             
-            # ဗီဒီယိုပို့ပါ (protect_content=True ကိုတော့ အပေါ်မှာ ဆွေးနွေးခဲ့သလို လိုအပ်မှ သုံးပါ)
+            # ဗီဒီယိုပို့ပါ
             bot.send_video(user_id, data['file_id'], caption=final_caption)
+            
+            # --- (ဂ) ပို့ပြီးရင် Count တိုးခြင်း ---
+            if user_id != ADMIN_ID:
+                users_col.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"daily_count": 1}, "$set": {"last_reset_date": datetime.now().strftime("%Y-%m-%d")}}
+                )
         else:
             bot.send_message(user_id, "❌ ဖိုင်ရှာမတွေ့ပါ။")
     except Exception as e:
+        print(f"Error sending movie: {e}")
         bot.send_message(user_id, "❌ Link မှားယွင်းနေပါသည်။")
 
 # --- ၃။ Admin Commands (File Upload) ---
@@ -210,6 +240,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
