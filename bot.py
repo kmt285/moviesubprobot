@@ -1,7 +1,7 @@
 import os
 import telebot
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
 from telebot import types
 from pymongo import MongoClient
 from bson.objectid import ObjectId
@@ -68,7 +68,11 @@ def send_movie(user_id, file_db_id):
         user = users_col.find_one({"_id": user_id})
         
         if user:
-            is_vip = user.get('is_vip', False)
+            vip_expiry = user.get('vip_expiry')
+            if vip_expiry and vip_expiry > datetime.now():
+                is_vip = True
+            else:
+                is_vip = False
             
             # Reset Logic (VIP ရော Free ရော ရက်ကူးရင် Reset လုပ်ပေးရမယ်)
             yangon_tz = pytz.timezone('Asia/Yangon')
@@ -239,12 +243,36 @@ def list_users(message):
 @bot.message_handler(commands=['addvip'], func=lambda m: m.from_user.id == ADMIN_ID)
 def add_vip(message):
     try:
-        # Command ပုံစံ: /addvip 123456789
-        user_id_to_add = int(message.text.split()[1])
-        users_col.update_one({"_id": user_id_to_add}, {"$set": {"is_vip": True}}, upsert=True)
-        bot.reply_to(message, f"✅ User ID `{user_id_to_add}` ကို VIP အဖြစ် သတ်မှတ်လိုက်ပါပြီ။", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, "❌ ID မှားယွင်းနေပါသည်။\nအသုံးပြုပုံ: `/addvip <user_id>`", parse_mode="Markdown")
+        # Command ခွဲခြင်း: /addvip 123456 30
+        args = message.text.split()
+        if len(args) < 3:
+            return bot.reply_to(message, "❌ မှားယွင်းနေသည်။\nပုံစံ: `/addvip <user_id> <days>`\n(Lifetime အတွက် 0 ဟုရိုက်ပါ)", parse_mode="Markdown")
+            
+        user_id_to_add = int(args[1])
+        days = int(args[2])
+        
+        # ရက်တွက်ခြင်း
+        now = datetime.now()
+        if days == 0:
+            # 0 ဆိုရင် Lifetime (နောက်ထပ် နှစ် ၁၀၀ ပေါင်းပေးလိုက်သည်)
+            expiry_date = now + timedelta(days=36500)
+            duration_text = "Lifetime ♾️"
+        else:
+            expiry_date = now + timedelta(days=days)
+            duration_text = f"{days} ရက်"
+            
+        # Database ထဲတွင် vip_expiry ဆိုပြီး ရက်စွဲသိမ်းမည်
+        users_col.update_one(
+            {"_id": user_id_to_add}, 
+            {"$set": {"vip_expiry": expiry_date}}, 
+            upsert=True
+        )
+        
+        # Admin ကို ပြန်ပြောခြင်း
+        bot.reply_to(message, f"✅ VIP ထည့်သွင်းပြီးပါပြီ!\n🆔 User: `{user_id_to_add}`\n⏳ Duration: {duration_text}\n📅 Expire: {expiry_date.strftime('%Y-%m-%d')}", parse_mode="Markdown")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
 
 @bot.message_handler(commands=['removevip'], func=lambda m: m.from_user.id == ADMIN_ID)
 def remove_vip(message):
@@ -304,6 +332,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
