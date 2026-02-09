@@ -16,6 +16,7 @@ MONGO_URI = os.getenv('MONGO_URI')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 FREE_DAILY_LIMIT = 10
 FREE_SAVE_LIMIT = 2
+VIP_SAVE_LIMIT = 50
 
 bot = telebot.TeleBot(BOT_TOKEN)
 client = MongoClient(MONGO_URI)
@@ -56,6 +57,7 @@ def get_not_joined(user_id):
     return not_joined
 
 # Video ပို့ပေးသည့် Function
+# Video ပို့ပေးသည့် Function
 def send_movie(user_id, file_db_id):
     # Default Settings
     protect_content = False  # ပုံမှန်အားဖြင့် Save ခွင့်ပြုမည်
@@ -68,40 +70,45 @@ def send_movie(user_id, file_db_id):
         if user:
             is_vip = user.get('is_vip', False)
             
-            # VIP မဟုတ်ရင် Limit တွေ စစ်တော့မယ်
-            if not is_vip:
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                last_reset = user.get('last_reset_date')
-                
-                # Counter တွေကို ယူမယ် (မရှိရင် 0)
-                daily_total = user.get('daily_total', 0)
-                daily_save = user.get('daily_save', 0)
+            # Reset Logic (VIP ရော Free ရော ရက်ကူးရင် Reset လုပ်ပေးရမယ်)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            last_reset = user.get('last_reset_date')
+            
+            # Counter တွေကို ယူမယ် (မရှိရင် 0)
+            daily_total = user.get('daily_total', 0)
+            daily_save = user.get('daily_save', 0)
 
-                # ရက်ကူးသွားရင် Reset လုပ်မယ်
-                if last_reset != today_str:
-                    users_col.update_one({"_id": user_id}, {
-                        "$set": {
-                            "daily_total": 0, 
-                            "daily_save": 0, 
-                            "last_reset_date": today_str
-                        }
-                    })
-                    daily_total = 0
-                    daily_save = 0
-                
-                # ၁။ Total Limit (10 ကား) ပြည့်မပြည့် စစ်မယ်
+            # ရက်ကူးသွားရင် Reset လုပ်မယ်
+            if last_reset != today_str:
+                users_col.update_one({"_id": user_id}, {
+                    "$set": {
+                        "daily_total": 0, 
+                        "daily_save": 0, 
+                        "last_reset_date": today_str
+                    }
+                })
+                daily_total = 0
+                daily_save = 0
+            
+            # --- Limit စစ်ဆေးခြင်း ---
+            if not is_vip:
+                # Free User ဆိုရင် Total Limit (10 ကား) စစ်မယ်
                 if daily_total >= FREE_DAILY_LIMIT:
                     return bot.send_message(user_id, 
                         f"⚠️ Free User Daily Limit Exceeded!\n ⏳Please try again after 24 hours\n\n"
                         f"💎 Join VIP for Unlimited 💎 @moviestoreadmin", 
                         parse_mode="Markdown")
                 
-                # ၂။ Save Limit (2 ကား) ပြည့်မပြည့် စစ်မယ်
-                # Save Limit ပြည့်သွားရင် protect_content ကို True ပေးလိုက်မယ် (Save မရတော့ဘူး)
+                # Free User Save Limit Check
                 if daily_save >= FREE_SAVE_LIMIT:
                     protect_content = True
-                    # User ကို အသိပေးချင်ရင် (Optional)
-                    # bot.send_message(user_id, "⚠️ Save Limit Exceeded! ⏳Please try again after 24 hours")
+
+            else:
+                # VIP User ဆိုရင် Save Limit (50 ကား) ပဲ စစ်မယ် (Total Limit မစစ်ဘူး)
+                if daily_save >= VIP_SAVE_LIMIT:
+                    protect_content = True
+                    # VIP ကို Save မရတော့ကြောင်း အသိပေးချင်ရင် ဒီအောက်က Comment ကို ဖွင့်ပါ
+                    # bot.send_message(user_id, "⚠️ VIP Save Limit ပြည့်သွားပါပြီ။ ယခုကားမှစ၍ Save ခွင့်မပြုတော့ပါ။")
 
     # --- (ခ) Video ပို့ပေးခြင်း ---
     try:
@@ -111,18 +118,19 @@ def send_movie(user_id, file_db_id):
             config = config_col.find_one({"type": "caption_config"})
             permanent_text = config['text'] if config else ""
             
-            # VIP Status ပေါ်မူတည်ပြီး Caption အနည်းငယ် ပြောင်းလို့ရ (Optional)
-            status_text = "🌟 Premium User" if is_vip else "👤 Free Account"
+            status_text = "🌟 Premium User" if is_vip else "👤 Free User"
             final_caption = f"{data['caption']}\n\n{permanent_text}\n\n{status_text}"
             
             # ဗီဒီယိုပို့ပါ (protect_content ကို ဒီနေရာမှာ သုံးပါပြီ)
             bot.send_video(user_id, data['file_id'], caption=final_caption, protect_content=protect_content)
             
             # --- (ဂ) Database Update လုပ်ခြင်း ---
-            if user_id != ADMIN_ID and not is_vip:
+            # VIP ရော Free ရော Count တိုးပေးရမယ် (ဒါမှ Limit စစ်လို့ရမှာ)
+            if user_id != ADMIN_ID:
                 update_query = {"$inc": {"daily_total": 1}}
                 
                 # Save လုပ်ခွင့်ရတဲ့ အလုံးဆိုရင် daily_save ကိုပါ +1 တိုးမယ်
+                # (protect_content=False ဆိုရင် Save လို့ရတာမို့ Count တိုးမယ်)
                 if not protect_content:
                     update_query["$inc"]["daily_save"] = 1
                     
@@ -295,6 +303,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
