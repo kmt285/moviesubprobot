@@ -1,5 +1,6 @@
 import os
 import telebot
+import pytz
 from datetime import datetime
 from telebot import types
 from pymongo import MongoClient
@@ -57,7 +58,6 @@ def get_not_joined(user_id):
     return not_joined
 
 # Video ပို့ပေးသည့် Function
-# Video ပို့ပေးသည့် Function
 def send_movie(user_id, file_db_id):
     # Default Settings
     protect_content = False  # ပုံမှန်အားဖြင့် Save ခွင့်ပြုမည်
@@ -71,7 +71,8 @@ def send_movie(user_id, file_db_id):
             is_vip = user.get('is_vip', False)
             
             # Reset Logic (VIP ရော Free ရော ရက်ကူးရင် Reset လုပ်ပေးရမယ်)
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            yangon_tz = pytz.timezone('Asia/Yangon')
+            today_str = datetime.now(yangon_tz).strftime("%Y-%m-%d")
             last_reset = user.get('last_reset_date')
             
             # Counter တွေကို ယူမယ် (မရှိရင် 0)
@@ -303,6 +304,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
