@@ -92,9 +92,8 @@ def send_movie(user_id, file_db_id):
                 # ၁။ Total Limit (10 ကား) ပြည့်မပြည့် စစ်မယ်
                 if daily_total >= FREE_DAILY_LIMIT:
                     return bot.send_message(user_id, 
-                        f"⚠️ **ဒီနေ့အတွက် ကြည့်ရှုခွင့် ပြည့်သွားပါပြီ။**\n\n"
-                        f"Free User များသည် တစ်ရက်လျှင် {FREE_DAILY_LIMIT} ကားသာ ကြည့်ရှုနိုင်ပါသည်။\n 24နာရီပြည့်မှ ပြန်လည်ကြိုးစားပါ။"
-                        f"Unlimited ကြည့်ရှုလိုပါက 💎 VIP ဝယ်ယူနိုင်ပါသည်။ @moviestoreadmin", 
+                        f"⚠️ Free User Daily Limit Exceeded!\n ⏳Please try again after 24 hours\n\n"
+                        f"💎 Join VIP for Unlimited 💎 @moviestoreadmin", 
                         parse_mode="Markdown")
                 
                 # ၂။ Save Limit (2 ကား) ပြည့်မပြည့် စစ်မယ်
@@ -102,7 +101,7 @@ def send_movie(user_id, file_db_id):
                 if daily_save >= FREE_SAVE_LIMIT:
                     protect_content = True
                     # User ကို အသိပေးချင်ရင် (Optional)
-                    # bot.send_message(user_id, "⚠️ Save Limit ပြည့်သွားသဖြင့် ဤဇာတ်ကားကို Save/Forward လုပ်၍ မရနိုင်ပါ။ 24နာရီပြည့်မှ ပြန်လည်ကြိုးစားပါ")
+                    # bot.send_message(user_id, "⚠️ Save Limit Exceeded! ⏳Please try again after 24 hours")
 
     # --- (ခ) Video ပို့ပေးခြင်း ---
     try:
@@ -296,6 +295,7 @@ if __name__ == "__main__":
     Thread(target=run).start()
     print("Bot is running...")
     bot.infinity_polling()
+
 
 
 
