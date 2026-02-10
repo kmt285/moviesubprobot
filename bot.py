@@ -246,44 +246,54 @@ def send_movie(user_id, file_db_id):
 
 # --- ၅။ Admin Commands & Web App Creation Flow ---
 
-# [NEW] Admin က Poster Forward လုပ်ရင် Web App ထဲထည့်မယ့် Flow
+# [NEW] Admin က Poster Forward လုပ်ရင် Web App ထဲထည့်မယ့် Flow (Fixed Version)
 @bot.message_handler(content_types=['photo'], func=lambda m: m.from_user.id == ADMIN_ID)
 def handle_poster_upload(message):
     if not message.caption:
         return bot.reply_to(message, "⚠️ Caption မပါပါ။ (Poster + Title/Description လိုအပ်သည်)")
 
-    # 1. Upload Image to Telegraph
     try:
         status_msg = bot.reply_to(message, "⏳ Uploading Poster...")
         
+        # 1. Get File Path from Telegram
         file_info = bot.get_file(message.photo[-1].file_id)
         file_url = f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}'
         
-        # Download image temporarily
+        # 2. Download Image
         response = requests.get(file_url)
-        with open('temp_poster.jpg', 'wb') as f:
-            f.write(response.content)
-            
-        # Upload to Telegraph
-        with open('temp_poster.jpg', 'rb') as f:
-            response = upload_file(f)
-        
-        poster_url = f"https://telegra.ph{response[0]}"
-        os.remove('temp_poster.jpg') # Clean up
+        if response.status_code != 200:
+            return bot.reply_to(message, "❌ ဓာတ်ပုံဒေါင်းလုပ်ဆွဲမရပါ။")
 
-        # 2. Ask for File DB ID
-        msg = bot.edit_message_text(
-            f"✅ Poster Uploaded!\n\n🔗 URL: {poster_url}\n\n👇 **ဒီကားအတွက် Database ID (File ID) ကို Reply ပြန်ပေးပါ။**\n(files collection ထဲက _id ကို copy ကူးထည့်ပါ)",
-            chat_id=message.chat.id,
-            message_id=status_msg.message_id
-        )
+        # 3. Direct Upload to Telegra.ph (Using requests instead of library)
+        # ယာယီဖိုင်သိမ်းစရာမလိုဘဲ Memory ထဲကနေ တန်းတင်ပါမယ် (ပိုမြန်သည်)
+        files = {
+            'file': ('poster.jpg', response.content, 'image/jpeg')
+        }
         
-        # Save context for next step
-        bot.register_next_step_handler(msg, save_movie_to_webapp, 
-                                     poster_url=poster_url, 
-                                     original_caption=message.caption)
-                                     
+        upload_response = requests.post('https://telegra.ph/upload', files=files)
+        upload_data = upload_response.json()
+
+        # Error handling for upload
+        if isinstance(upload_data, list) and 'src' in upload_data[0]:
+            poster_path = upload_data[0]['src']
+            poster_url = f"https://telegra.ph{poster_path}"
+            
+            # 4. Success - Ask for DB ID
+            msg = bot.edit_message_text(
+                f"✅ Poster Uploaded!\n\n🔗 URL: {poster_url}\n\n👇 **ဒီကားအတွက် Database ID (File ID) ကို Reply ပြန်ပေးပါ။**\n(files collection ထဲက _id ကို copy ကူးထည့်ပါ)",
+                chat_id=message.chat.id,
+                message_id=status_msg.message_id
+            )
+            
+            # Save context
+            bot.register_next_step_handler(msg, save_movie_to_webapp, 
+                                         poster_url=poster_url, 
+                                         original_caption=message.caption)
+        else:
+            bot.edit_message_text(f"❌ Upload Failed: {upload_data}", chat_id=message.chat.id, message_id=status_msg.message_id)
+            
     except Exception as e:
+        print(f"Error: {e}")
         bot.reply_to(message, f"❌ Error: {e}")
 
 def save_movie_to_webapp(message, poster_url, original_caption):
@@ -424,4 +434,5 @@ def run():
 if __name__ == "__main__":
     Thread(target=run).start()
     bot.infinity_polling()
+
 
