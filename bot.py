@@ -350,7 +350,7 @@ def start(message):
     not_joined = get_not_joined(user_id)
 
     # Web App Button
-    web_app_btn = types.WebAppInfo("https://YOUR-DOMAIN-URL/webapp") # ⚠️ REPLACE THIS
+    web_app_btn = types.WebAppInfo("https://moviesubprobot.onrender.com") # ⚠️ REPLACE THIS
     
     if not_joined:
         markup = types.InlineKeyboardMarkup()
@@ -382,7 +382,7 @@ def check_callback(call):
             send_movie(user_id, data_parts[1])
         else:
             # Join ပြီးရင် Web App ခလုတ်ပို့ပေးမယ်
-            web_app_btn = types.WebAppInfo("https://YOUR-DOMAIN-URL/webapp") # ⚠️ REPLACE THIS
+            web_app_btn = types.WebAppInfo("https://moviesubprobot.onrender.com") # ⚠️ REPLACE THIS
             markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
             markup.add(types.KeyboardButton(text="🎬 Movie Store", web_app=web_app_btn))
             bot.send_message(user_id, "✅ Join ပြီးပါပြီ။", reply_markup=markup)
@@ -424,3 +424,4 @@ def run():
 if __name__ == "__main__":
     Thread(target=run).start()
     bot.infinity_polling()
+
