@@ -1,6 +1,8 @@
+telegraph
 requests
 pyTelegramBotAPI
 pymongo
 flask
 python-dotenv
 pytz
+
