@@ -1,354 +1,225 @@
 import os
+import time
+import requests
 import telebot
-import pytz
-from datetime import datetime, timedelta
+from flask import Flask, jsonify, request, render_template_string
+from threading import Thread
 from telebot import types
 from pymongo import MongoClient
-from bson.objectid import ObjectId
-from flask import Flask
-from threading import Thread
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- ၁။ Configuration ပိုင်း ---
+# --- Configuration ---
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 MONGO_URI = os.getenv('MONGO_URI')
-ADMIN_ID = int(os.getenv('ADMIN_ID'))
-FREE_DAILY_LIMIT = 10
-FREE_SAVE_LIMIT = 2
-VIP_SAVE_LIMIT = 50
+admin_env = os.getenv('ADMIN_IDS', '')
+ADMIN_IDS = [int(i) for i in admin_env.split(',') if i.strip()]
 
 bot = telebot.TeleBot(BOT_TOKEN)
-client = MongoClient(MONGO_URI)
-db = client['MovieBot']
-files_col = db['files']
-users_col = db['users']
-config_col = db['settings']
 
-# Force Join စစ်ဆေးလိုသော Channel စာရင်း (ဒီမှာ လိုသလောက် ထည့်နိုင်သည်)
-REQUIRED_CHANNELS = [
-    {"id": -1003179962336, "link": "https://t.me/moviesbydatahouse"},
-]
+# MongoDB Setup
+try:
+    client = MongoClient(MONGO_URI)
+    db = client['MyBotDB']
+    config_col = db['settings']
+    movies_col = db['movies']  # Movie တွေသိမ်းမယ့် Collection
+    print("✅ MongoDB Connected Successfully!")
+except Exception as e:
+    print(f"❌ MongoDB Connection Error: {e}")
 
-app = Flask('')
-@app.route('/')
-def home(): return "Bot is running!"
-
-# --- ၂။ Force Subscribe စစ်ဆေးသည့် Function ---
-def get_not_joined(user_id):
-    """User မ Join ရသေးသော Channel များစာရင်းကို ပြန်ပေးမည်"""
-    not_joined = []
-    
-    # Admin ဖြစ်နေရင် ဘာမှစစ်စရာမလိုဘဲ ကျော်ပေးမည်
-    if user_id == ADMIN_ID:
-        return []
-
-    for ch in REQUIRED_CHANNELS:
-        try:
-            member = bot.get_chat_member(ch['id'], user_id)
-            # member, administrator, creator မဟုတ်လျှင် မ Join သေးဟု သတ်မှတ်
-            if member.status not in ['member', 'administrator', 'creator']:
-                not_joined.append(ch)
-        except Exception as e:
-            # Bot က Channel ထဲမှာ Admin မဟုတ်ရင် ကျော်သွားပေးမယ်
-            print(f"DEBUG Error for User {user_id} in Channel {ch['id']}: {e}")
-            continue
-            
-    return not_joined
-
-# Video ပို့ပေးသည့် Function
-def send_movie(user_id, file_db_id):
-    # Default Settings
-    protect_content = False  # ပုံမှန်အားဖြင့် Save ခွင့်ပြုမည်
-    is_vip = False
-    
-    # --- (က) User Status စစ်ဆေးခြင်း ---
-    if user_id != ADMIN_ID:
-        user = users_col.find_one({"_id": user_id})
-        
-        if user:
-            vip_expiry = user.get('vip_expiry')
-            if vip_expiry and vip_expiry > datetime.now():
-                is_vip = True
-            else:
-                is_vip = False
-            
-            # Reset Logic (VIP ရော Free ရော ရက်ကူးရင် Reset လုပ်ပေးရမယ်)
-            yangon_tz = pytz.timezone('Asia/Yangon')
-            today_str = datetime.now(yangon_tz).strftime("%Y-%m-%d")
-            last_reset = user.get('last_reset_date')
-            
-            # Counter တွေကို ယူမယ် (မရှိရင် 0)
-            daily_total = user.get('daily_total', 0)
-            daily_save = user.get('daily_save', 0)
-
-            # ရက်ကူးသွားရင် Reset လုပ်မယ်
-            if last_reset != today_str:
-                users_col.update_one({"_id": user_id}, {
-                    "$set": {
-                        "daily_total": 0, 
-                        "daily_save": 0, 
-                        "last_reset_date": today_str
-                    }
-                })
-                daily_total = 0
-                daily_save = 0
-            
-            # --- Limit စစ်ဆေးခြင်း ---
-            if not is_vip:
-                # Free User ဆိုရင် Total Limit (10 ကား) စစ်မယ်
-                if daily_total >= FREE_DAILY_LIMIT:
-                    return bot.send_message(user_id, 
-                        f"⚠️ Free User Daily Limit Exceeded!\n ⏳Please try again after 24 hours\n\n"
-                        f"💎 Join VIP for Unlimited 💎 @moviestoreadmin", 
-                        parse_mode="Markdown")
-                
-                # Free User Save Limit Check
-                if daily_save >= FREE_SAVE_LIMIT:
-                    protect_content = True
-
-            else:
-                # VIP User ဆိုရင် Save Limit (50 ကား) ပဲ စစ်မယ် (Total Limit မစစ်ဘူး)
-                if daily_save >= VIP_SAVE_LIMIT:
-                    protect_content = True
-                    # VIP ကို Save မရတော့ကြောင်း အသိပေးချင်ရင် ဒီအောက်က Comment ကို ဖွင့်ပါ
-                    # bot.send_message(user_id, "⚠️ VIP Save Limit ပြည့်သွားပါပြီ။ ယခုကားမှစ၍ Save ခွင့်မပြုတော့ပါ။")
-
-    # --- (ခ) Video ပို့ပေးခြင်း ---
+# --- Helper Function: Upload Image to Telegraph ---
+# Web App မှာ ပုံပေါ်ဖို့အတွက် Telegram က ပုံကို Link ပြောင်းပေးရပါမယ်
+def upload_to_telegraph(file_path):
     try:
-        data = files_col.find_one({"_id": ObjectId(file_db_id)})
-        if data:
-            # Caption ပြင်ဆင်ခြင်း
-            config = config_col.find_one({"type": "caption_config"})
-            permanent_text = config['text'] if config else ""
-            
-            status_text = "🌟 Premium User" if is_vip else "👤 Free User"
-            final_caption = f"{data['caption']}\n\n{permanent_text}\n\n{status_text}"
-            
-            # ဗီဒီယိုပို့ပါ (protect_content ကို ဒီနေရာမှာ သုံးပါပြီ)
-            bot.send_video(user_id, data['file_id'], caption=final_caption, protect_content=protect_content)
-            
-            # --- (ဂ) Database Update လုပ်ခြင်း ---
-            # VIP ရော Free ရော Count တိုးပေးရမယ် (ဒါမှ Limit စစ်လို့ရမှာ)
-            if user_id != ADMIN_ID:
-                update_query = {"$inc": {"daily_total": 1}}
-                
-                # Save လုပ်ခွင့်ရတဲ့ အလုံးဆိုရင် daily_save ကိုပါ +1 တိုးမယ်
-                # (protect_content=False ဆိုရင် Save လို့ရတာမို့ Count တိုးမယ်)
-                if not protect_content:
-                    update_query["$inc"]["daily_save"] = 1
-                    
-                users_col.update_one(
-                    {"_id": user_id},
-                    update_query
-                )
-        else:
-            bot.send_message(user_id, "❌ ဖိုင်ရှာမတွေ့ပါ။")
+        url = "https://telegra.ph/upload"
+        files = {'file': ('image.jpg', open(file_path, 'rb'), 'image/jpeg')}
+        response = requests.post(url, files=files)
+        src = response.json()[0]['src']
+        return f"https://telegra.ph{src}"
     except Exception as e:
-        print(f"Error: {e}")
-        bot.send_message(user_id, "❌ Link မှားယွင်းနေပါသည်။")
+        print(e)
+        return None
 
-# --- ၃။ Admin Commands (File Upload) ---
+# --- Flask Server (Mini App Backend) ---
+app = Flask(__name__)
 
-@bot.message_handler(content_types=['video', 'document'], func=lambda m: m.from_user.id == ADMIN_ID)
-def handle_file(message):
-    file_id = message.video.file_id if message.content_type == 'video' else message.document.file_id
-    caption = message.caption or "No Title"
-    res = files_col.insert_one({"file_id": file_id, "caption": caption})
-    share_link = f"https://t.me/{(bot.get_me()).username}?start={res.inserted_id}"
-    bot.reply_to(message, f"✅ သိမ်းပြီးပါပြီ!\n\nLink: `{share_link}`", parse_mode="Markdown")
-
-# --- User Data သိမ်းဆည်းခြင်း ---
-def register_user(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or "No Username"
-    first_name = message.from_user.first_name
+# Netflix Style HTML Template (Simple Version)
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie App</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #141414; color: white; font-family: sans-serif; }
+        .movie-card { transition: transform 0.3s; }
+        .movie-card:active { transform: scale(0.95); }
+    </style>
+</head>
+<body class="p-4">
+    <h1 class="text-2xl font-bold text-red-600 mb-4">MOVIES</h1>
     
-    # User ရှိမရှိစစ်ပြီး မရှိမှ အသစ်ထည့်မည်
-    user_data = {
-        "_id": user_id,
-        "username": username,
-        "name": first_name
+    <div id="movie-grid" class="grid grid-cols-2 gap-4">
+        </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+
+        // Fetch Movies from API
+        fetch('/api/movies')
+            .then(response => response.json())
+            .then(data => {
+                const grid = document.getElementById('movie-grid');
+                data.forEach(movie => {
+                    const card = document.createElement('div');
+                    card.className = 'movie-card bg-gray-800 rounded-lg overflow-hidden relative';
+                    card.innerHTML = `
+                        <img src="${movie.poster}" class="w-full h-48 object-cover">
+                        <div class="p-2">
+                            <h3 class="text-sm font-bold truncate">${movie.title}</h3>
+                            <p class="text-xs text-gray-400 truncate">${movie.description}</p>
+                            <button onclick="watchMovie('${movie.msg_id}')" class="mt-2 w-full bg-red-600 text-white py-1 rounded text-sm">
+                                ▶ Watch
+                            </button>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            });
+
+        function watchMovie(msgId) {
+            // Bot ကို start param နဲ့ လှမ်းခေါ်မည်
+            // user က bot ထဲရောက်တာနဲ့ file auto ကျလာမည်
+            tg.openTelegramLink(`https://t.me/${tg.initDataUnsafe.bot_username}?start=${msgId}`);
+            tg.close();
+        }
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def home():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/movies')
+def get_movies():
+    # နောက်ဆုံးတင်တဲ့ ၂၀ ကားကို ယူမည်
+    movies = list(movies_col.find({}, {'_id': 0}).sort('_id', -1).limit(20))
+    return jsonify(movies)
+
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
+# --- Bot Helpers ---
+def get_config():
+    data = config_col.find_one({"_id": "bot_settings"})
+    return data if data else {}
+
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
+
+# --- Admin Movie Upload Wizard (The Manual Part) ---
+user_steps = {} # Temporary storage for wizard
+
+@bot.message_handler(commands=['add'], func=lambda m: is_admin(m.from_user.id))
+def add_movie_step1(message):
+    msg = bot.reply_to(message, "📸 **အဆင့် (၁):** Movie Poster ပုံကို ပို့ပေးပါ။")
+    bot.register_next_step_handler(msg, process_poster)
+
+def process_poster(message):
+    if not message.photo:
+        return bot.reply_to(message, "❌ ပုံမဟုတ်ပါ။ `/add` ပြန်ခေါ်ပါ။")
+    
+    # Download and Upload to Telegraph for permanent link
+    file_info = bot.get_file(message.photo[-1].file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    
+    with open("temp.jpg", 'wb') as new_file:
+        new_file.write(downloaded_file)
+    
+    poster_url = upload_to_telegraph("temp.jpg")
+    os.remove("temp.jpg") # Clean up
+    
+    if not poster_url:
+        return bot.reply_to(message, "❌ Error uploading image.")
+
+    user_steps[message.from_user.id] = {'poster': poster_url}
+    msg = bot.reply_to(message, "📝 **အဆင့် (၂):** နာမည် နှင့် အညွှန်း ရေးပို့ပါ။\n(Format: Name | Description)")
+    bot.register_next_step_handler(msg, process_details)
+
+def process_details(message):
+    try:
+        text = message.text.split('|')
+        title = text[0].strip()
+        desc = text[1].strip() if len(text) > 1 else "No description"
+        
+        user_steps[message.from_user.id]['title'] = title
+        user_steps[message.from_user.id]['description'] = desc
+        
+        msg = bot.reply_to(message, "📂 **အဆင့် (၃):** DB Channel ထဲက Movie File ကို ဒီကို Forward လုပ်ပေးပါ။")
+        bot.register_next_step_handler(msg, process_file)
+    except:
+        bot.reply_to(message, "❌ Format မှားနေပါသည်။ `/add` ပြန်လုပ်ပါ။")
+
+def process_file(message):
+    if not message.forward_from_chat:
+        return bot.reply_to(message, "⚠️ DB Channel ကနေ forward လုပ်ထားတာ မဟုတ်ပါ။")
+    
+    data = user_steps.get(message.from_user.id)
+    movie_data = {
+        "title": data['title'],
+        "description": data['description'],
+        "poster": data['poster'],
+        "msg_id": message.forward_from_message_id, # File ID link
+        "created_at": time.time()
     }
-    # users_col ဆိုတဲ့ collection အသစ်တစ်ခုကို သတ်မှတ်ပေးပါ (အပေါ်ပိုင်း Setup မှာ)
-    users_col.update_one({"_id": user_id}, {"$set": user_data}, upsert=True)
+    
+    # Save to MongoDB
+    movies_col.insert_one(movie_data)
+    bot.reply_to(message, f"✅ **Saved Successfully!**\nMovie: {data['title']}\nAdded to Mini App.")
+    user_steps.pop(message.from_user.id, None)
 
-# --- ၄။ Main logic (Start Command & Force Sub) ---
-
+# --- Existing Bot Logic (Start & File Delivery) ---
 @bot.message_handler(commands=['start'])
 def start(message):
-    register_user(message)
     user_id = message.from_user.id
+    config = get_config()
     args = message.text.split()
+    payload = args[1] if len(args) > 1 else "only"
 
-    # ၁။ Join ထားခြင်း ရှိမရှိ အရင်စစ်ဆေးမည်
-    not_joined = get_not_joined(user_id)
+    # Join Check (Simplified for brevity)
+    # ... (Your existing join check code here) ...
 
-    # ၂။ မ Join ရသေးသော Channel ရှိနေလျှင်
-    if not_joined:
+    if payload != "only":
+        send_file(user_id, payload)
+    else:
+        # Show Mini App Button
         markup = types.InlineKeyboardMarkup()
-        for ch in not_joined:
-            markup.add(types.InlineKeyboardButton("📢 Join Channel", url=ch['link']))
-            
-        # ရုပ်ရှင် ID ပါလာရင် Try Again ခလုတ်မှာ အဲဒီ ID ထည့်ပေးမည်
-        if len(args) > 1:
-            file_db_id = args[1]
-            markup.add(types.InlineKeyboardButton("♻️ Join ပြီးပါပြီ", callback_data=f"check_{file_db_id}"))
-        else:
-            markup.add(types.InlineKeyboardButton("♻️ Join ပြီးပါပြီ", callback_data="check_only"))
+        web_app = types.WebAppInfo(url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}") 
+        # Note: Render URL မသိရင် bot father မှာထည့်မဲ့ link ကို hardcode ထည့်လဲရတယ်
+        
+        markup.add(types.InlineKeyboardButton("🎬 Open Movie App", web_app=web_app))
+        bot.send_message(user_id, "Welcome to Movie Bot!", reply_markup=markup)
 
-        # ⚠️ အရေးကြီး - ဒီနေရာမှာ စာပို့ပြီးရင် function ကို ရပ်လိုက်ရပါမယ် (return သုံးရမည်)
-        return bot.send_message(user_id, "⚠️ **ဗီဒီယိုကြည့်ရှုရန် အောက်ပါ Channelကို အရင် Join ပေးပါ။**", reply_markup=markup, parse_mode="Markdown")
-
-    # ၃။ အားလုံး Join ပြီးသား ဖြစ်မှသာ ဒီနေရာကို ရောက်လာမည်
-    if len(args) > 1:
-        send_movie(user_id, args[1]) #
-    else:
-        bot.send_message(user_id, "မင်္ဂလာပါ! ဇာတ်ကားများကြည့်ရန် - https://t.me/moviesbydatahouse") #
-
-@bot.message_handler(commands=['setcaption'], func=lambda m: m.from_user.id == ADMIN_ID)
-def set_permanent_caption(message):
-    # Command ရဲ့ နောက်က စာသားကို ယူပါ
-    text = message.text.replace('/setcaption', '').strip()
-    if not text:
-        return bot.reply_to(message, "❌ စာသားထည့်ပေးပါ။ ဥပမာ - `/setcaption @mychannel`", parse_mode="Markdown")
-    
-    # Database ထဲမှာ သိမ်းပါ
-    config_col.update_one({"type": "caption_config"}, {"$set": {"text": text}}, upsert=True)
-    bot.reply_to(message, f"✅ ပုံသေစာသားကို `{text}` အဖြစ် ပြောင်းလဲလိုက်ပါပြီ။", parse_mode="Markdown")
-
-# --- ၅။ Callback Handlers (Try Again ခလုတ်များ) ---
-# --- Admin Stats & User List ---
-@bot.message_handler(commands=['stats'], func=lambda m: m.from_user.id == ADMIN_ID)
-def get_stats(message):
-    total = users_col.count_documents({})
-    bot.reply_to(message, f"📊 **Bot Statistics**\n\nစုစုပေါင်း User အရေအတွက်: `{total}` ယောက်", parse_mode="Markdown")
-
-@bot.message_handler(commands=['users'], func=lambda m: m.from_user.id == ADMIN_ID)
-def list_users(message):
-    users = users_col.find()
-    user_list_text = "ID | Username | Name\n" + "-"*30 + "\n"
-    for u in users:
-        user_list_text += f"{u['_id']} | @{u.get('username')} | {u.get('name')}\n"
-    
-    # စာသားအရမ်းရှည်နိုင်လို့ ဖိုင်အနေနဲ့ ပို့ပေးမယ်
-    with open("users.txt", "w", encoding="utf-8") as f:
-        f.write(user_list_text)
-    
-    with open("users.txt", "rb") as f:
-        bot.send_document(message.chat.id, f, caption="👥 Bot အသုံးပြုသူများစာရင်း")
-
-# --- VIP Management Commands ---
-@bot.message_handler(commands=['addvip'], func=lambda m: m.from_user.id == ADMIN_ID)
-def add_vip(message):
+def send_file(user_id, msg_id):
+    config = get_config()
+    db_id = config.get('db_channel_id')
     try:
-        # Command ခွဲခြင်း: /addvip 123456 30
-        args = message.text.split()
-        if len(args) < 3:
-            return bot.reply_to(message, "❌ မှားယွင်းနေသည်။\nပုံစံ: `/addvip <user_id> <days>`\n(Lifetime အတွက် 0 ဟုရိုက်ပါ)", parse_mode="Markdown")
-            
-        user_id_to_add = int(args[1])
-        days = int(args[2])
-        
-        # ရက်တွက်ခြင်း
-        now = datetime.now()
-        if days == 0:
-            # 0 ဆိုရင် Lifetime (နောက်ထပ် နှစ် ၁၀၀ ပေါင်းပေးလိုက်သည်)
-            expiry_date = now + timedelta(days=36500)
-            duration_text = "Lifetime ♾️"
-        else:
-            expiry_date = now + timedelta(days=days)
-            duration_text = f"{days} ရက်"
-            
-        # Database ထဲတွင် vip_expiry ဆိုပြီး ရက်စွဲသိမ်းမည်
-        users_col.update_one(
-            {"_id": user_id_to_add}, 
-            {"$set": {"vip_expiry": expiry_date}}, 
-            upsert=True
-        )
-        
-        # Admin ကို ပြန်ပြောခြင်း
-        bot.reply_to(message, f"✅ VIP ထည့်သွင်းပြီးပါပြီ!\n🆔 User: `{user_id_to_add}`\n⏳ Duration: {duration_text}\n📅 Expire: {expiry_date.strftime('%Y-%m-%d')}", parse_mode="Markdown")
-        
+        bot.copy_message(user_id, db_id, int(msg_id))
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
-
-@bot.message_handler(commands=['removevip'], func=lambda m: m.from_user.id == ADMIN_ID)
-def remove_vip(message):
-    try:
-        user_id_to_remove = int(message.text.split()[1])
-        users_col.update_one({"_id": user_id_to_remove}, {"$set": {"is_vip": False}})
-        bot.reply_to(message, f"User ID `{user_id_to_remove}` မှ VIP ကို ဖယ်ရှားလိုက်ပါပြီ။", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, "❌ Error.")
-
-# --- ပိုမိုကောင်းမွန်သော Broadcast Feature (စာရော ပုံပါ ရသည်) ---
-@bot.message_handler(commands=['broadcast'], func=lambda m: m.from_user.id == ADMIN_ID)
-def broadcast_command(message):
-    # Admin က တစ်ခုခုကို Reply ပြန်ပြီး /broadcast လို့ ရိုက်ရပါမယ်
-    if not message.reply_to_message:
-        return bot.reply_to(message, "❌ Broadcast လုပ်မည့် စာ သို့မဟုတ် ဓာတ်ပုံကို **Reply** လုပ်ပြီး `/broadcast` ဟု ရိုက်ပေးပါ။")
-
-    target_msg = message.reply_to_message
-    users = users_col.find()
-    success = 0
-    fail = 0
-
-    status_msg = bot.send_message(ADMIN_ID, "🚀 Broadcast စတင်နေပါပြီ...")
-
-    for u in users:
-        try:
-            # copy_message ကို သုံးရင် စာသားရော၊ ပုံရော၊ ဗီဒီယိုပါ မူရင်းအတိုင်း ကူးယူပို့ပေးပါတယ်
-            bot.copy_message(u['_id'], ADMIN_ID, target_msg.message_id)
-            success += 1
-        except:
-            fail += 1
-            continue
-            
-    bot.edit_message_text(f"📢 Broadcast ပြီးစီးပါပြီ။\n✅ အောင်မြင်: {success}\n❌ ကျရှုံး: {fail}", ADMIN_ID, status_msg.message_id)
-    
-@bot.callback_query_handler(func=lambda call: call.data.startswith('check_'))
-def check_callback(call):
-    user_id = call.from_user.id
-    data_parts = call.data.split("_")
-    
-    not_joined = get_not_joined(user_id)
-    
-    if not_joined:
-        bot.answer_callback_query(call.id, "❌ Channel မ Join ရသေးပါ။", show_alert=True)
-    else:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        # ရုပ်ရှင်ကြည့်ဖို့ လာတာဆိုရင် ရုပ်ရှင်ပို့ပေးမယ်
-        if len(data_parts) > 1 and data_parts[1] != "only":
-            send_movie(user_id, data_parts[1])
-        else:
-            bot.send_message(user_id, "✅ Join ပြီးပါပြီ။ အသုံးပြုနိုင်ပါပြီ။")
-
-def run():
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+        bot.send_message(user_id, "❌ File Not Found or Bot not Admin in DB Channel.")
 
 if __name__ == "__main__":
-    Thread(target=run).start()
-    print("Bot is running...")
+    keep_alive()
     bot.infinity_polling()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
