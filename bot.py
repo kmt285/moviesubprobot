@@ -32,9 +32,20 @@ REQUIRED_CHANNELS = [
 ]
 
 app = Flask('')
-@app.route('/')
-def home(): return "Bot is running!"
 
+@app.route('/')
+def home():
+    return "Bot is running 24/7!"
+
+def run_server():
+    # port ကို dynamic ယူပြီး run ပါမယ်
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
+def keep_alive():
+    # Server ကို thread တစ်ခုနဲ့ သီးသန့် run ထားမယ်
+    t = Thread(target=run_server)
+    t.start()
+    
 # --- ၂။ Force Subscribe စစ်ဆေးသည့် Function ---
 def get_not_joined(user_id):
     """User မ Join ရသေးသော Channel များစာရင်းကို ပြန်ပေးမည်"""
@@ -329,9 +340,12 @@ def run():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
 if __name__ == "__main__":
-    Thread(target=run).start()
-    print("Bot is running...")
-    bot.infinity_polling()
+    keep_alive()  # Server ကို အရင်စတင်မယ်
+    print("🚀 Bot is starting and keep_alive server is active...")
+    
+    # Bot ကို အမြဲတမ်း run နေစေမယ့် infinity_polling
+    # timeout နဲ့ long_polling_timeout ထည့်ပေးခြင်းက network ကြောင့် ရပ်မသွားအောင် ကူညီပါတယ်
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
 
 
 
