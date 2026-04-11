@@ -229,6 +229,83 @@ def set_permanent_caption(message):
     config_col.update_one({"type": "caption_config"}, {"$set": {"text": text}}, upsert=True)
     bot.reply_to(message, f"✅ ပုံသေစာသားကို `{text}` အဖြစ် ပြောင်းလဲလိုက်ပါပြီ။", parse_mode="Markdown")
 
+# ==========================================
+# 🎁 TEMPORARY GIVEAWAY CODE START (1111 Event)
+# ==========================================
+import random
+giveaway_col = db['giveaway_1111'] # သီးသန့် Database Collection ခွဲထားမည်
+
+@bot.message_handler(func=lambda m: m.text and m.text.strip() == '1111')
+def handle_giveaway(message):
+    user_id = message.from_user.id
+    
+    # ၁။ ချန်နယ် Join ထားခြင်း ရှိ/မရှိ စစ်ဆေးခြင်း
+    not_joined = get_not_joined(user_id)
+    if not_joined:
+        return bot.reply_to(message, "❌ **ကံစမ်းမဲဝင်ရန် မအောင်မြင်ပါ။**\n\nအရင်ဆုံး ကျွန်တော်တို့၏ Channel များကို Join ထားရပါမည်။ /start ကိုနှိပ်ပြီး ပြန်လည်ကြိုးစားပါ။", parse_mode="Markdown")
+
+    # ၂။ Active User ဟုတ်/မဟုတ် စစ်ဆေးခြင်း (Bot ကို အသုံးပြုဖူးသူ ဖြစ်ရမည်)
+    user_data = users_col.find_one({"_id": user_id})
+    if not user_data:
+        return bot.reply_to(message, "❌ **သင်သည် Bot ကို အသုံးပြုထားသူ မဟုတ်ပါ။**\n\nတကယ် Active ဖြစ်သော အသုံးပြုသူများကိုသာ ဦးစားပေးပါသဖြင့် ဇာတ်ကားများ အရင်ရှာဖွေကြည့်ရှုပေးပါ။")
+
+    # ၃။ တစ်ကြိမ်သာ ပါဝင်ခွင့်ပြုခြင်း
+    already_joined = giveaway_col.find_one({"_id": user_id})
+    if already_joined:
+        return bot.reply_to(message, "⚠️ သင်သည် ကံစမ်းမဲစာရင်းတွင် ပါဝင်ပြီးဖြစ်ပါသည်။ ထပ်မံစာရင်းသွင်း၍ မရပါ။")
+
+    # အားလုံးကိုက်ညီပါက စာရင်းသွင်းခြင်း
+    giveaway_col.insert_one({
+        "_id": user_id,
+        "username": message.from_user.username or "No Username",
+        "name": message.from_user.first_name,
+        "joined_time": datetime.now()
+    })
+
+    # အောင်မြင်ကြောင်း စည်းကမ်းချက်များနှင့်အတူ ပြန်စာပို့ခြင်း
+    reply_text = (
+        "🎉 **1111 Subscribers Giveaway တွင် စာရင်းသွင်းပြီးပါပြီ!**\n\n"
+        "📜 **စည်းကမ်းချက်များ**\n"
+        "၁။ Channel Join ထားသူများ‌သာ ပါဝင်ခွင့်ရရှိပါမည်။\n"
+        "၂။ ကံထူးရှင် (၃) ယောက်ကို Random စနစ်ဖြင့် ရွေးချယ်သွားပါမည်။ ကံထူးရှင်များကို Channel တွင်ကြေငြာပေးမည်။\n"
+        "၃။ ကံထူးရှင်များကို တစ်ယောက်လျှင် (၅)ထောင်ကျပ် ဖုန်းဘေ လက်ဆောင်ဖြည့်ပေးသွားပါမည်။\n\n"
+        "ကံစမ်းမဲဖွင့်မည့်ရက် 4လပိုင်း 14ရက်နေ့ 🍀"
+    )
+    bot.reply_to(message, reply_text, parse_mode="Markdown")
+
+# --- Admin သီးသန့် ကံစမ်းမဲ ရွေးချယ်မည့် Command ---
+@bot.message_handler(commands=['draw1111'], func=lambda m: m.from_user.id == ADMIN_ID)
+def draw_giveaway(message):
+    try:
+        # Command အနောက်မှာ လူအရေအတွက် ရိုက်မထည့်ရင် ၃ ယောက်လို့ သတ်မှတ်မည်
+        args = message.text.split()
+        count = int(args[1]) if len(args) > 1 else 3
+        
+        # စာရင်းသွင်းထားသူ အားလုံးကို ယူမည်
+        participants = list(giveaway_col.find())
+        
+        if len(participants) == 0:
+            return bot.reply_to(message, "❌ ကံစမ်းမဲ စာရင်းသွင်းထားသူ တစ်ယောက်မှ မရှိသေးပါ။")
+            
+        if len(participants) < count:
+            return bot.reply_to(message, f"❌ လူအရေအတွက် မလောက်ပါ။ စုစုပေါင်း {len(participants)} ယောက်သာ ရှိပါသည်။")
+
+        # Random ရွေးချယ်ခြင်း
+        winners = random.sample(participants, count)
+        
+        res = f"🎉 **1111 Giveaway ကံထူးရှင် ({count}) ယောက်:**\n\n"
+        for w in winners:
+            res += f"ID: `{w['_id']}`\nName: {w.get('name')}\nUsername: @{w.get('username')}\n"
+            res += "-" * 20 + "\n"
+            
+        bot.reply_to(message, res, parse_mode="Markdown")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+# ==========================================
+# 🎁 TEMPORARY GIVEAWAY CODE END
+# ==========================================
+
 # --- ၅။ Callback Handlers (Try Again ခလုတ်များ) ---
 # --- Admin Stats & User List ---
 @bot.message_handler(commands=['stats'], func=lambda m: m.from_user.id == ADMIN_ID)
